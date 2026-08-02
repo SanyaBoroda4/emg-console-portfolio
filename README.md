@@ -16,6 +16,10 @@ App Service via GitHub Actions. It runs the company's daily payment intake,
 delivery tracking, and slab-yard scanning workflows, and talks to AI-agent
 workflows (n8n + Claude) that do the heavy lifting.
 
+**Related repo:** [emg-mcp-portfolio](https://github.com/SanyaBoroda4/emg-mcp-portfolio)
+— the MCP server that gives Claude conversational access to the company's
+job/scheduling system.
+
 > **What was scrubbed:** coworker names/emails in seed data and docs are
 > fictional placeholders, and internal URLs/IDs are redacted. No secrets were
 > ever committed in either repo — all credentials live in `.env` (gitignored)
