@@ -1,17 +1,26 @@
 # EMG Ops Console
 
+> ### ⚠️ Reading the commit history? Start here.
+> This is the **public mirror of a private production repo with 141 commits**
+> (development started July 8, 2026; the app has been deployed on Azure and in
+> daily company use since July 12, 2026). The original history can't be
+> published as-is because it contains internal business data — employee emails,
+> live infrastructure URLs — so the public history begins with one scrubbed
+> snapshot commit. **From here on, every commit to the private repo is
+> mirrored here 1:1** (same message, same day), so the ongoing history you see
+> is the real development timeline.
+
 A production web console for a stone-fabrication business, built end-to-end:
 FastAPI + PostgreSQL backend, React/TypeScript PWA frontend, deployed to Azure
 App Service via GitHub Actions. It runs the company's daily payment intake,
 delivery tracking, and slab-yard scanning workflows, and talks to AI-agent
 workflows (n8n + Claude) that do the heavy lifting.
 
-> **Portfolio snapshot.** This is a scrubbed public copy of the private
-> production repo: coworker names/emails in seed data and docs are fictional
-> placeholders, and internal URLs/IDs are redacted. No secrets were ever
-> committed — all credentials live in `.env` (gitignored) and GitHub Actions
-> secrets. See `EMG_CONSOLE_PROJECT_SUMMARY.md` for the full architecture
-> write-up.
+> **What was scrubbed:** coworker names/emails in seed data and docs are
+> fictional placeholders, and internal URLs/IDs are redacted. No secrets were
+> ever committed in either repo — all credentials live in `.env` (gitignored)
+> and GitHub Actions secrets. See `EMG_CONSOLE_PROJECT_SUMMARY.md` for the
+> full architecture write-up.
 
 ## What it does
 
