@@ -1,0 +1,22 @@
+.vs/
+.env
+__pycache__/
+node_modules/
+dist/
+.venv/
+.pytest_cache/
+.playwright-mcp/
+payments-table-view.png
+
+# PRODUCTION n8n export - contains live API key, never commit
+EMG CHECK-BOT*.json
+
+# Owner-edited n8n exports - contain filled-in secrets, never commit
+n8n/PILOT CONSOLE CHECK-BOT ver*.json
+
+# Production sweep export - reference only, never commit
+n8n/EMG PAYMENT-SWEEP BOT*.json
+n8n/PILOT CONSOLE*latest.json
+n8n/PILOT CONSOLE PAYMENT-SWEEP*.json
+n8n/SLABBOT*.json
+n8n/PILOT CONSOLE SLABBOT ver*.json

@@ -1,0 +1,49 @@
+[project]
+name = "emg-console-backend"
+version = "0.1.0"
+description = "EMG Ops Console backend (Stage 1)"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    # Production process manager (Azure App Service). startup.sh runs gunicorn
+    # with uvicorn workers; unused in local dev, which runs uvicorn directly.
+    "gunicorn>=22.0",
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
+    "psycopg[binary]>=3.2",
+    "pydantic-settings>=2.4",
+    "pyairtable>=2.3",
+    "pytest>=8.3",
+    # httpx: required at runtime by fastapi.testclient.TestClient (used in
+    # test_api.py). Not an added feature — a test-plumbing dependency.
+    "httpx>=0.27",
+    # python-multipart: FastAPI's required parser for multipart/form-data —
+    # POST /api/checks (spec'd as multipart) cannot exist without it.
+    "python-multipart>=0.0.9",
+    # Stage 2 approved dependencies (STAGE2_BUILD_PLAN.md):
+    # google-auth verifies Google ID tokens; itsdangerous signs our session cookie.
+    "google-auth>=2.30",
+    "itsdangerous>=2.2",
+    # Push mechanics slice (STAGE_PUSH_MECHANICS_SLICE.md) — the ONLY new
+    # dependency: sends VAPID-signed Web Push messages. Brings py-vapid, used by
+    # the key generator script.
+    "pywebpush>=2.0",
+    # Decision flow §4 (owner-approved amendment to "no new deps"): the outbound
+    # trigger re-encodes the stored check photo (longest side ≤1568px, JPEG q85)
+    # before sending it to the workflow — impossible without an imaging library.
+    "pillow>=10.4",
+]
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+# Dependency manifest only. The app package itself is never installed into
+# site-packages; code runs from /app (bind-mounted in dev).
+packages = []
+
+[tool.pytest.ini_options]
+testpaths = ["app/tests"]
+pythonpath = ["."]

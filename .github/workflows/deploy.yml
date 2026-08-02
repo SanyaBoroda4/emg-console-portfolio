@@ -1,0 +1,163 @@
+name: Deploy to Azure
+
+# Push to main = deploy (deploy plan §1.6). Tests gate the release: the deploy
+# job needs the test job green first. Until the owner has provisioned Azure and
+# added the AZURE_WEBAPP_PUBLISH_PROFILE secret, the deploy job runs but skips
+# its work (guarded below) so early pushes stay green instead of red.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  # Must match the Web App name created in the portal (deploy plan §3.2).
+  # Change this line if the portal handed you a different name.
+  AZURE_WEBAPP_NAME: emg-console
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "20"
+
+jobs:
+  test:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      # pyproject declares packages=[], so this installs the runtime + test
+      # dependencies only (fastapi, sqlalchemy, pytest, ...), no app package.
+      - name: Install backend dependencies
+        run: pip install ./backend
+
+      # The suite runs on SQLite in-memory (tests/conftest.py), but importing
+      # app.db builds a module-level engine from DATABASE_URL and get_settings()
+      # fails fast on any missing required var. These dummy values satisfy that
+      # import; the DB URL is never actually connected to (tests override get_db).
+      - name: Run pytest
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+psycopg://ci:ci@localhost:5432/ci
+          AIRTABLE_BASE_ID: ci-base
+          AIRTABLE_PAYMENTS_TABLE: ci-table
+          GOOGLE_CLIENT_ID: ci-client-id.apps.googleusercontent.com
+          SESSION_SECRET: ci-session-secret
+          AIRTABLE_WRITE_TOKEN: ci-write-token
+          PILOT_HOOK_SECRET: ci-pilot-secret
+        run: pytest
+
+  deploy:
+    name: Build & deploy
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Skip everything below until Azure is provisioned and the publish-profile
+      # secret exists. Keeps pre-provisioning pushes green (test passes, deploy
+      # steps skip with a notice) instead of failing on a missing secret.
+      - name: Check Azure is configured
+        id: guard
+        env:
+          # Via env, not inline: the publish profile is multi-line XML with
+          # quotes that break a literal [ -z "..." ] test in the shell.
+          PUBLISH_PROFILE: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+        run: |
+          if [ -z "$PUBLISH_PROFILE" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::AZURE_WEBAPP_PUBLISH_PROFILE not set — skipping deploy. Add the secret once the Web App exists (deploy plan §2, §3.4)."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Node
+        if: steps.guard.outputs.configured == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # Python 3.12 must match the App Service runtime so the wheels we vendor
+      # below (psycopg, pydantic-core, ...) are ABI-compatible with the server.
+      - name: Set up Python
+        if: steps.guard.outputs.configured == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      # VITE_GOOGLE_CLIENT_ID is a BUILD-TIME variable: Vite inlines it into the
+      # JS bundle here, so it must be present now, not in Azure's runtime env.
+      # (A Google OAuth client id is public by design — it ships in the browser
+      # bundle either way — but we source it from a secret to keep one home for
+      # config.) If the secret is absent the login page shows "GOOGLE_CLIENT_ID
+      # is not configured".
+      - name: Build frontend
+        if: steps.guard.outputs.configured == 'true'
+        working-directory: frontend
+        env:
+          VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
+        run: |
+          npm ci
+          npm run build
+
+      # Assemble the deploy artifact to the layout startup.sh expects at the
+      # site root: the backend package + alembic alongside the built frontend
+      # under frontend_dist/. requirements.txt is generated from pyproject so
+      # deps have a single source of truth.
+      - name: Assemble deploy artifact
+        if: steps.guard.outputs.configured == 'true'
+        run: |
+          mkdir -p deploy
+          cp -r backend/app          deploy/app
+          cp -r backend/alembic      deploy/alembic
+          cp    backend/alembic.ini  deploy/alembic.ini
+          cp    backend/startup.sh   deploy/startup.sh
+          cp -r frontend/dist        deploy/frontend_dist
+          python -c "import tomllib; d=tomllib.load(open('backend/pyproject.toml','rb')); open('deploy/requirements.txt','w').write(chr(10).join(d['project']['dependencies'])+chr(10))"
+
+      # Install the backend dependencies AT BUILD TIME into pydeps/ and ship
+      # them in the package. startup.sh puts pydeps/ on PYTHONPATH, so the app
+      # runs with zero server-side build — Azure's Oryx post-deploy build does
+      # not reliably run for zip/OneDeploy packages, which previously left the
+      # server with no dependencies ("alembic: command not found").
+      #
+      # Build INSIDE a Debian bullseye container (glibc 2.31) — the same OS the
+      # App Service Python 3.12 image uses. A plain pip install on the newer
+      # GitHub runner pulls wheels needing a glibc the server lacks ("GLIBC_2.33
+      # not found" crash loop). Building in bullseye gets old-glibc-compatible
+      # wheels for the compiled packages (cryptography, psycopg, pydantic-core)
+      # AND builds pure-Python sdists like http-ece — a pywebpush dependency
+      # that ships no wheel, which is why forcing --platform manylinux2014
+      # (requires --only-binary=:all:) is not an option here.
+      - name: Vendor backend dependencies into the package
+        if: steps.guard.outputs.configured == 'true'
+        run: |
+          docker run --rm -v "$PWD/deploy:/w" -w /w python:3.12-slim-bullseye \
+            sh -c "python -m pip install --upgrade pip -q && pip install --target pydeps -r requirements.txt"
+
+      - name: Deploy to Azure Web App
+        id: deploy
+        if: steps.guard.outputs.configured == 'true'
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: deploy
+
+      # Azure issues a regionalized hostname with a unique suffix (e.g.
+      # emg-console-xxxx.westus3-01.azurewebsites.net), not <name>.azurewebsites.net,
+      # so report the URL the deploy action actually returns rather than guessing.
+      - name: Deploy summary
+        if: steps.guard.outputs.configured == 'true'
+        env:
+          APP_URL: ${{ steps.deploy.outputs.webapp-url }}
+        run: |
+          {
+            echo "### Deployed :rocket:"
+            echo ""
+            echo "**App:** ${APP_URL}"
+            echo "**Health check:** ${APP_URL}/api/health"
+          } >> "$GITHUB_STEP_SUMMARY"

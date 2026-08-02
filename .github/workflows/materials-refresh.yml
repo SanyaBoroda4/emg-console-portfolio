@@ -1,0 +1,36 @@
+name: Materials catalog refresh
+
+on:
+  schedule:
+    # Daily 9:05 UTC — Airtable only (what we actually bought).
+    - cron: "5 9 * * *"
+    # Monday 10:05 UTC — full run incl. every supplier website.
+    - cron: "5 10 * * 1"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "daily (Airtable only) or weekly (everything)"
+        default: "weekly"
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        run: |
+          pip install httpx playwright
+          python -m playwright install --with-deps chromium
+      - name: Refresh catalog
+        env:
+          PILOT_HOOK_SECRET: ${{ secrets.PILOT_HOOK_SECRET }}
+          AIRTABLE_TOKEN: ${{ secrets.AIRTABLE_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # The Monday 10:05 cron and manual "weekly" runs do the full
+          # supplier sweep; the daily cron only rescans Airtable.
+          MODE: ${{ (github.event_name == 'workflow_dispatch' && inputs.mode) || (github.event.schedule == '5 10 * * 1' && 'weekly') || 'daily' }}
+        run: xvfb-run -a python scripts/materials_refresh.py

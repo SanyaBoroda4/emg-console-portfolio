@@ -1,0 +1,4283 @@
+{
+ "name": "PILOT CONSOLE CHECK-BOT",
+ "nodes": [
+  {
+   "id": "b32598e5-fe32-5b49-ba55-b1c13fadc4b8",
+   "name": "Console Trigger",
+   "type": "n8n-nodes-base.webhook",
+   "typeVersion": 2.1,
+   "position": [
+    0,
+    0
+   ],
+   "parameters": {
+    "httpMethod": "POST",
+    "path": "pilot-checkbot",
+    "options": {}
+   },
+   "webhookId": "21b1ab57-8375-5b46-97cd-a4c040671e7f"
+  },
+  {
+   "id": "53ee6eaa-bb6f-5edb-a6d8-82508f13d9c3",
+   "name": "Pilot Config",
+   "type": "n8n-nodes-base.set",
+   "typeVersion": 3.4,
+   "position": [
+    260,
+    0
+   ],
+   "parameters": {
+    "assignments": {
+     "assignments": [
+      {
+       "id": "a1",
+       "name": "console_base_url",
+       "type": "string",
+       "value": "PASTE_CONSOLE_BASE_URL"
+      },
+      {
+       "id": "a2",
+       "name": "bridge_base_url",
+       "type": "string",
+       "value": "https://bridge.emgcheckbot.us"
+      },
+      {
+       "id": "a3",
+       "name": "pilot_hook_secret",
+       "type": "string",
+       "value": "PASTE_PILOT_HOOK_SECRET"
+      },
+      {
+       "id": "a4",
+       "name": "anthropic_api_key",
+       "type": "string",
+       "value": "PASTE_ANTHROPIC_KEY"
+      },
+      {
+       "id": "a5",
+       "name": "qb_verification_enabled",
+       "type": "boolean",
+       "value": true
+      },
+      {
+       "id": "a6",
+       "name": "qb_company_url",
+       "type": "string",
+       "value": "https://sandbox-quickbooks.api.intuit.com/v3/company/9341457257917923"
+      },
+      {
+       "id": "a7",
+       "name": "drive_archive_enabled",
+       "type": "boolean",
+       "value": true
+      },
+      {
+       "id": "a8",
+       "name": "drive_folder_id",
+       "type": "string",
+       "value": "1x26XpqkIS6qKJNh4OLyeC-a05uyF8k0G"
+      },
+      {
+       "id": "a9",
+       "name": "moraware_job_base",
+       "type": "string",
+       "value": "https://granite-marble-tops.moraware.net/sys/job/"
+      }
+     ]
+    },
+    "includeOtherFields": true,
+    "options": {}
+   }
+  },
+  {
+   "id": "812dbfa9-aec8-57d7-9e5e-51638e3e9237",
+   "name": "Verify Secret",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    520,
+    0
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "loose",
+      "version": 3
+     },
+     "conditions": [
+      {
+       "id": "aca93f0a",
+       "leftValue": "={{ $('Console Trigger').item.json.body.secret === $json.pilot_hook_secret }}",
+       "rightValue": "={{ true }}",
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "05b07347-3f69-5a49-8dd7-55856da3b7d7",
+   "name": "Drop (Bad Secret)",
+   "type": "n8n-nodes-base.noOp",
+   "typeVersion": 1,
+   "position": [
+    780,
+    0
+   ],
+   "parameters": {}
+  },
+  {
+   "id": "f97310cf-fdb2-570c-989b-746ff3dcbca0",
+   "name": "Trigger Context",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    780,
+    170
+   ],
+   "parameters": {
+    "jsCode": "// Console outbound payload (backend outbound.py):\n// { review_item_id, image_base64, qb_invoice, submitted_by, secret }\nconst b = $('Console Trigger').item.json.body || {};\nconst qb = String(b.qb_invoice == null ? '' : b.qb_invoice).trim();\nconst submitted = String(b.submitted_by || '').trim();\nconst local = submitted.split('@')[0] || '';\nreturn { json: {\n  review_item_id: String(b.review_item_id || ''),\n  image_base64: String(b.image_base64 || ''),\n  qb_invoice: qb || null,\n  submitted_by: submitted || null,\n  submitted_by_name: local ? (local.charAt(0).toUpperCase() + local.slice(1)) : 'a manager',\n  // Synthesized caption: keeps the transplanted OCR prompt + parser working\n  // exactly as in production (caption_invoice, cash_invoice fall out of it).\n  caption: qb ? ('invoice ' + qb) : ''\n}};\n"
+   }
+  },
+  {
+   "id": "c5f8ff3f-1c25-57a6-bd83-7c663c1901a3",
+   "name": "Read Check with Claude",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    1040,
+    0
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "https://api.anthropic.com/v1/messages",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "x-api-key",
+       "value": "={{ $('Pilot Config').item.json.anthropic_api_key }}"
+      },
+      {
+       "name": "anthropic-version",
+       "value": "2023-06-01"
+      },
+      {
+       "name": "content-type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={\n  \"model\": \"claude-opus-4-8\",\n  \"max_tokens\": 2048,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": [\n        {\n          \"type\": \"image\",\n          \"source\": {\n            \"type\": \"base64\",\n            \"media_type\": \"image/jpeg\",\n            \"data\": \"{{ $('Trigger Context').item.json.image_base64 }}\"\n          }\n        },\n        {\n          \"type\": \"text\",\n          \"text\": \"You are a meticulous financial-document examiner reading a PHOTOGRAPH of a paper check sent by a project manager at a countertop company. Accuracy is critical: this number controls how much money gets recorded. Read slowly and verify every single digit.\\n\\nORIENTATION: the photo may be rotated, tilted, or upside down. First mentally rotate it so the text is upright, THEN read.\\n\\nThe PM may have typed a caption naming the customer. PM caption: [{{ ($('Trigger Context').item.json.caption || 'no caption').split('\"').join(' ').split('\\n').join(' ') }}]\\n\\nFIRST, look at the image and decide what it is. Set document_type to 'cash' if the image shows physical cash or currency bills (NOT a check), 'check' if it is a paper bank check, otherwise 'other'. If it is cash, do NOT read an amount or check number off the image - the PM types those in the caption, so capture them as cash_amount and cash_invoice from the caption instead.\\n\\nA check states the amount TWICE and the check number TWICE on purpose. Use that redundancy to catch your own mistakes.\\n\\nAMOUNT - read it two INDEPENDENT ways, then reconcile:\\n1) The courtesy box (the digits right after the $ sign). Read it digit by digit. These pairs are commonly confused on handwritten/printed checks - look hard: 8 vs 5, 8 vs 6, 8 vs 3, 5 vs 6, 1 vs 7, 0 vs 6, 9 vs 4.\\n2) The legal line (the amount written out in words). Transcribe the words EXACTLY as written, then convert those words to a number yourself.\\nThe courtesy figure and the legal words MUST resolve to the SAME number. If they disagree, you have misread one of them - go back and re-read both digit by digit until they reconcile. Mark amount_confidence 'high' ONLY when the figures and the words independently give the same number. If they still disagree after careful re-reading, follow banking convention: the WRITTEN legal amount is authoritative - use it and mark amount_confidence 'low'.\\n\\nCHECK NUMBER - read it two INDEPENDENT ways, then reconcile:\\n1) The number in the top-right corner. Read it digit by digit.\\n2) The MICR line (the blocky magnetic-ink digits along the very bottom). Transcribe the ENTIRE MICR line. The check number is normally the LAST group of digits in it. The MICR line is machine-printed and is the most reliable source - trust it over the corner if they differ.\\nMark check_number_confidence 'high' ONLY when the corner and the MICR check number agree.\\n\\nJOINT PAYERS: a check can be printed with TWO payers (often a married couple) who usually share one surname. When two names are printed, set last_name to that shared surname, set first_name to either person first name, and put BOTH full names into all_payer_names. For a single payer, all_payer_names has one entry.\\n\\nRespond with ONLY a JSON object. No markdown fences, no text before or after it. Use exactly this shape:\\n\\n{\\n  \\\"check_number_corner\\\": \\\"corner number digit by digit e.g. 8-6-6-6, or null\\\",\\n  \\\"micr_line_raw\\\": \\\"the entire MICR line as you read it\\\",\\n  \\\"check_number_micr\\\": \\\"check number isolated from the MICR line, digits only, or null\\\",\\n  \\\"check_number\\\": \\\"your FINAL reconciled check number, digits only\\\",\\n  \\\"check_number_confidence\\\": \\\"high or low\\\",\\n  \\\"payer_name\\\": \\\"full name(s) printed top-left, exactly as printed\\\",\\n  \\\"all_payer_names\\\": [\\\"every full name printed top-left, as an array; usually one entry, but two for a joint account like a married couple\\\"],\\n  \\\"first_name\\\": \\\"payer FIRST name only, or null for a business\\\",\\n  \\\"middle_name\\\": \\\"payer middle name or initial if present, else null\\\",\\n  \\\"last_name\\\": \\\"payer LAST name only, or null for a business\\\",\\n  \\\"entity_type\\\": \\\"individual or business\\\",\\n  \\\"street_number\\\": \\\"house/building number from the payer address, else null\\\",\\n  \\\"street_name\\\": \\\"street name with suffix like Rd/Ave/Ln, else null\\\",\\n  \\\"zip\\\": \\\"zip code from the payer address, else null\\\",\\n  \\\"amount_courtesy_raw\\\": \\\"exactly what is written in the $ box, e.g. 3,810.00\\\",\\n  \\\"amount_numeric\\\": \\\"the courtesy box as a plain number e.g. 3810.00\\\",\\n  \\\"amount_legal_words\\\": \\\"the legal line transcribed word for word\\\",\\n  \\\"amount_written\\\": \\\"the legal line converted to a plain number e.g. 3810.00\\\",\\n  \\\"amounts_match\\\": true,\\n  \\\"amount\\\": \\\"your FINAL reconciled amount as a plain number\\\",\\n  \\\"amount_confidence\\\": \\\"high or low\\\",\\n  \\\"date\\\": \\\"the date written on the check\\\",\\n  \\\"caption_name\\\": \\\"the customer/job name the PM means in the caption above, NAME ONLY - strip words like deposit/paid/rem/dep/PIF. Preserve underscores and capitalization. null if no caption name\\\",\\n  \\\"caption_first_name\\\": \\\"first name from the caption name, else null\\\",\\n  \\\"caption_last_name\\\": \\\"last name from the caption name, else null\\\",\\n  \\\"payment_hint\\\": \\\"deposit, remainder, or PIF from the caption (dep=deposit, rem=remainder, PIF or paid in full=PIF), else null\\\",\\n  \\\"document_type\\\": \\\"check, cash, or other - what the IMAGE shows (see instruction above)\\\",\\n  \\\"cash_amount\\\": \\\"ONLY when document_type is cash: the dollar amount the PM typed in the caption as a plain number e.g. 500; else null\\\",\\n  \\\"cash_invoice\\\": \\\"ONLY when document_type is cash: the invoice/QB number the PM typed in the caption as digits e.g. 6484; else null\\\"\\n}\\n\\nRules: NEVER guess a digit. If a character is truly illegible after careful study, use null and set the relevant confidence to 'low'. Read amount_numeric and amount_written INDEPENDENTLY before you compare them. caption_name comes ONLY from the caption text in brackets above, never from the check image.\"\n        }\n      ]\n    }\n  ]\n}",
+    "options": {}
+   }
+  },
+  {
+   "id": "0823e801-5b81-599e-b332-bb70b8ae0cf2",
+   "name": "Parse Check Data",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    1300,
+    0
+   ],
+   "parameters": {
+    "mode": "runOnceForEachItem",
+    "jsCode": "// ===== Hardened check reader (Parse Check Data) =====\n\n// 1) Pull the JSON object out of the model reply\nconst rawText = $input.item.json.content[0].text || '';\nlet jsonStr = rawText.replace(/```json|```/g, '').trim();\nconst f = jsonStr.indexOf('{'), l = jsonStr.lastIndexOf('}');\nif (f !== -1 && l !== -1) jsonStr = jsonStr.slice(f, l + 1);\nlet check = {};\ntry { check = JSON.parse(jsonStr); } catch (e) { check = {}; }\n\nfunction cleanText(v){ if(v===undefined||v===null) return null; const t=String(v).replace(/\\s+/g,' ').trim(); return t.length?t:null; }\nfunction digitsOnly(v){ if(v===undefined||v===null) return null; const dd=String(v).replace(/[^0-9]/g,''); return dd.length?dd:null; }\nfunction toMoney(v){ if(v===undefined||v===null) return null; const n=parseFloat(String(v).replace(/[^0-9.]/g,'')); return isNaN(n)?null:Math.round(n*100)/100; }\n\n// 2) CHECK NUMBER — vote across corner + MICR + MICR tail + model's value\nconst cnCorner = digitsOnly(check.check_number_corner);\nconst cnMicr   = digitsOnly(check.check_number_micr);\nlet   cnTail   = null;\nif (check.micr_line_raw){ const g=String(check.micr_line_raw).split(/[^0-9]+/).filter(x=>x.length); if(g.length) cnTail=g[g.length-1]; }\nconst cnModel  = digitsOnly(check.check_number);\nconst cnVotes  = [cnCorner,cnMicr,cnTail,cnModel].filter(x=>x!==null);\nlet check_number = cnModel||cnMicr||cnCorner||cnTail||null, check_number_verified=false;\nif (cnVotes.length){\n  const t={}; for(const v of cnVotes) t[v]=(t[v]||0)+1;\n  const r=Object.entries(t).sort((a,b)=>b[1]-a[1]);\n  check_number=r[0][0];\n  check_number_verified=(r[0][1]>=2) && (String(check.check_number_confidence||'').toLowerCase()==='high');\n}\n\n// 3) AMOUNT — courtesy vs legal; on conflict the WRITTEN amount wins\nconst amtC=toMoney(check.amount_numeric), amtL=toMoney(check.amount_written);\nconst amtHigh=String(check.amount_confidence||'').toLowerCase()==='high';\nlet amount=null, amount_verified=false, amount_conflict=false;\nif (amtC!==null && amtL!==null){\n  if (amtC===amtL){ amount=amtC; amount_verified=amtHigh; }\n  else { amount=amtL; amount_conflict=true; amount_verified=false; }\n} else { amount=(amtL!==null)?amtL:amtC; amount_verified=false; }\n\n// 4) CAPTION — split payment-hint words from a real customer name\nconst rawCaption = cleanText($('Trigger Context').item.json.caption) || '';\nconst captionRaw = cleanText(check.caption_name) || rawCaption;\n\n// hint can come from the caption OR Claude's read of the memo line\nfunction hintFrom(s){\n  s = (s||'').toString().toLowerCase();\n  if (/\\b(pif|payoff|paid in full|full)\\b/.test(s)) return 'PIF';\n  if (/\\b(deposit|dep|down)\\b/.test(s)) return 'deposit';\n  if (/\\b(remainder|remaining|remain|rem|balance|bal|final)\\b/.test(s)) return 'remainder';\n  if (/\\b(progress|prog|partial)\\b/.test(s)) return 'progress';\n  return null;\n}\nlet paymentHint = hintFrom(rawCaption) || hintFrom(captionRaw) || hintFrom(check.payment_hint);\n\n// strip payment/admin words; whatever real name remains (if any) is the customer\nfunction stripHintWords(s){\n  return (s||'').toString()\n    .replace(/\\b(pif|payoff|pay off|paid in full|paid|pays|pay|payment|pmt|full|deposit|dep|down payment|downpayment|down|remainder|remaining|remain|rem|balance|bal|final|progress|prog|partial|check|cheque|ck|chk|invoice|inv|job|for|from|the)\\b/gi,' ')\n    .replace(/#?\\d+/g,' ')\n    .replace(/[^A-Za-z\\s'.\\-]/g,' ')\n    .replace(/\\s+/g,' ').trim();\n}\nlet captionName = null, usedCaption = false;\nif (captionRaw){\n  const namePart = stripHintWords(captionRaw);\n  if (namePart.replace(/[^A-Za-z]/g,'').length >= 2) captionName = namePart;\n}\n\n// 5) NAME PARTS — a real caption name wins; else use the check's printed name (address always travels too)\nconst checkName = cleanText(check.payer_name);\nconst chkFirst = cleanText(check.first_name);\nconst chkMid   = cleanText(check.middle_name);\nconst chkLast  = cleanText(check.last_name);\nlet first_name=null, middle_name=null, last_name=null;\nif (captionName){\n  const parts = captionName.split(/\\s+/).filter(Boolean);\n  if (parts.length>=2){ first_name=parts[0]; last_name=parts[parts.length-1]; }\n  else { last_name=captionName; }\n  usedCaption=true;\n} else {\n  first_name=chkFirst; middle_name=chkMid; last_name=chkLast;\n}\n\n// 6) entity type + address (always from the check)\nlet entity_type = (check.entity_type||'').toString().toLowerCase()==='business' ? 'business' : 'individual';\nconst street_number = cleanText(check.street_number);\nconst street_name   = cleanText(check.street_name);\nconst zip           = cleanText(check.zip);\nconst display_name = captionName || checkName || ([first_name,last_name].filter(Boolean).join(' ')) || null;\n\n// caption may carry an invoice number (\"6465 rem\") - capture it as an invoice #, never a name\nconst captionInvoice = ((rawCaption||'').match(/\\d{3,}/) || [null])[0];\n\n// every printed name becomes a search candidate so the surname is tried no matter how the lines parse\nlet additional_names = [];\nif (Array.isArray(check.all_payer_names)) additional_names = check.all_payer_names.map(cleanText).filter(x => x && x.replace(/[^A-Za-z]/g,'').length >= 2);\nif (checkName && !additional_names.some(n => n.toLowerCase() === checkName.toLowerCase())) additional_names.push(checkName);\nif (last_name && !additional_names.some(n => n.toLowerCase() === last_name.toLowerCase())) additional_names.push(last_name);\nadditional_names = Array.from(new Set(additional_names));\n\n// 7) confidence flags\nconst flags=[];\nif(!check_number_verified) flags.push('check# needs review');\nif(amount_conflict) flags.push('AMOUNT MISMATCH: $'+amtC+' figures vs $'+amtL+' words - using words');\nelse if(!amount_verified) flags.push('amount needs review');\n\n// 8) need a name OR an address to search\nif(!last_name && !street_number){\n  return { json: { readable:false, message:\"Couldn't read a usable name or address from the check or caption.\" } };\n}\n\nreturn { json: {\n  readable:true,\n  check_number, check_number_verified,\n  display_name, payer_name: checkName || display_name,\n  caption_name: captionName, used_caption: usedCaption,\n  caption_job_name: cleanText(check.caption_name),\n  first_name, middle_name, last_name, entity_type,\n  street_number, street_name, zip,\n  payment_hint: paymentHint,\n  caption_invoice: captionInvoice,\n  document_type: (cleanText(check.document_type)||'').toLowerCase(),\n  cash_amount: (check.cash_amount!=null && /[0-9]/.test(String(check.cash_amount))) ? parseFloat(String(check.cash_amount).replace(/[^0-9.]/g,'')) : null,\n  cash_invoice: (check.cash_invoice!=null && /[0-9]/.test(String(check.cash_invoice))) ? String(check.cash_invoice).replace(/[^0-9]/g,'') : null,\n  additional_names: additional_names,\n  amount, amount_verified, amount_conflict,\n  amount_numeric: amtC, amount_written: amtL,\n  date: check.date || null,\n  confidence_flags: flags.join('; ')\n}};"
+   }
+  },
+  {
+   "id": "1dc875a2-c143-56eb-b5ed-9b06daed989d",
+   "name": "Readable?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    1560,
+    0
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "loose",
+      "version": 3
+     },
+     "conditions": [
+      {
+       "id": "cc64d556",
+       "leftValue": "={{ $json.readable === true }}",
+       "rightValue": "={{ true }}",
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "b6698cec-6838-5b56-942d-082b1e51eaee",
+   "name": "Update: Read Result",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    1820,
+    0
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $('Pilot Config').item.json.console_base_url }}/api/hooks/pilot/update",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "X-Pilot-Secret",
+       "value": "={{ $('Pilot Config').item.json.pilot_hook_secret }}"
+      },
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={\n  \"review_item_id\": \"{{ $('Trigger Context').item.json.review_item_id }}\",\n  \"body\": {{ JSON.stringify('Read the ' + ($('Parse Check Data').item.json.document_type === 'cash' ? 'photo (cash)' : 'check') + ': ' + ($('Parse Check Data').item.json.amount != null ? ('$' + $('Parse Check Data').item.json.amount) : 'amount unreadable') + ($('Parse Check Data').item.json.check_number ? (', #' + $('Parse Check Data').item.json.check_number) : '') + ($('Parse Check Data').item.json.payer_name ? (', ' + $('Parse Check Data').item.json.payer_name) : '') + '.' + ($('Parse Check Data').item.json.confidence_flags ? (' \\u26a0 ' + $('Parse Check Data').item.json.confidence_flags) : '')) }},\n  \"fields\": {{ JSON.stringify(Object.fromEntries(Object.entries({amount: $('Parse Check Data').item.json.amount, check_number: $('Parse Check Data').item.json.check_number, payer_name: $('Parse Check Data').item.json.payer_name, caption_name: $('Parse Check Data').item.json.caption_name}).filter(function(e){return e[1] !== null && e[1] !== undefined && e[1] !== '';}))) }}\n}",
+    "options": {}
+   }
+  },
+  {
+   "id": "7fc83b69-206c-530a-b111-aef875336f28",
+   "name": "Ask: Unreadable",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    1820,
+    170
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $('Pilot Config').item.json.console_base_url }}/api/hooks/pilot/question",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "X-Pilot-Secret",
+       "value": "={{ $('Pilot Config').item.json.pilot_hook_secret }}"
+      },
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={\n  \"review_item_id\": \"{{ $('Trigger Context').item.json.review_item_id }}\",\n  \"body\": {{ JSON.stringify(\"I couldn't read a usable name or address off this photo. \" + 'Type the customer/job name, or the 4-digit QB invoice #.') }},\n  \"candidates\": {{ [] }},\n  \"resume_url\": \"{{ $execution.resumeUrl }}\",\n  \"allowed_freeform\": true,\n  \"format_hint\": {{ JSON.stringify('job name or 4-digit invoice #') }},\n  \"push\": true\n}",
+    "options": {}
+   }
+  },
+  {
+   "id": "f601d700-26d2-5b44-aa82-ab39c844b99d",
+   "name": "Is Cash Photo?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    2080,
+    0
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "loose",
+      "version": 3
+     },
+     "conditions": [
+      {
+       "id": "fe3cd01e",
+       "leftValue": "={{ ($json.document_type||'')==='cash' }}",
+       "rightValue": "={{ true }}",
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "ace3a321-dc75-5dbb-89d4-c9cea4763c4a",
+   "name": "Cash Data",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    2340,
+    0
+   ],
+   "parameters": {
+    "jsCode": "// Merge OCR-caption cash data with anything the manager typed in an answer.\nconst p = $('Parse Check Data').item.json;\nlet extra = {};\ntry { extra = $('Parse Cash Info').item.json || {}; } catch (e) { extra = {}; }\nreturn { json: {\n  cash_amount: (extra.cash_amount != null ? extra.cash_amount : p.cash_amount),\n  cash_invoice: (extra.cash_invoice != null ? extra.cash_invoice : p.cash_invoice),\n  _asked: Object.keys(extra).length > 0\n}};\n"
+   }
+  },
+  {
+   "id": "21276530-2bcb-5c05-a2ce-51c81ba71b88",
+   "name": "Cash Has Data?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    2600,
+    0
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "loose",
+      "version": 3
+     },
+     "conditions": [
+      {
+       "id": "e9df2374",
+       "leftValue": "={{ Number($('Cash Data').item.json.cash_amount)>0 && /^[0-9]{3,6}$/.test(String($('Cash Data').item.json.cash_invoice||'')) }}",
+       "rightValue": "={{ true }}",
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "7b5308ca-61d9-5915-8270-1fa5168e1a1a",
+   "name": "Ask: Cash Info",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    2860,
+    0
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $('Pilot Config').item.json.console_base_url }}/api/hooks/pilot/question",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "X-Pilot-Secret",
+       "value": "={{ $('Pilot Config').item.json.pilot_hook_secret }}"
+      },
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={\n  \"review_item_id\": \"{{ $('Trigger Context').item.json.review_item_id }}\",\n  \"body\": {{ JSON.stringify('\\ud83d\\udcb5 That looks like cash. I need the amount and the 4-digit QB invoice # to record it \\u2014 type both.') }},\n  \"candidates\": {{ [] }},\n  \"resume_url\": \"{{ $execution.resumeUrl }}\",\n  \"allowed_freeform\": true,\n  \"format_hint\": {{ JSON.stringify('amount and invoice, e.g. 500 1042') }},\n  \"push\": {{ $('Cash Data').item.json._asked ? false : true }}\n}",
+    "options": {}
+   }
+  },
+  {
+   "id": "449d96e1-14eb-57a6-9925-e294f5bea419",
+   "name": "Ask: Cash Invoice Not Found",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    3380,
+    0
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $('Pilot Config').item.json.console_base_url }}/api/hooks/pilot/question",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "X-Pilot-Secret",
+       "value": "={{ $('Pilot Config').item.json.pilot_hook_secret }}"
+      },
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={\n  \"review_item_id\": \"{{ $('Trigger Context').item.json.review_item_id }}\",\n  \"body\": {{ JSON.stringify('\\ud83d\\udcb5 I couldn\\u2019t find invoice ' + ($('Cash Data').item.json.cash_invoice || '?') + ' in Moraware \\u2014 double-check the number and type it again (amount + invoice).') }},\n  \"candidates\": {{ [] }},\n  \"resume_url\": \"{{ $execution.resumeUrl }}\",\n  \"allowed_freeform\": true,\n  \"format_hint\": {{ JSON.stringify('amount and invoice, e.g. 500 1042') }},\n  \"push\": {{ $('Cash Data').item.json._asked ? false : true }}\n}",
+    "options": {}
+   }
+  },
+  {
+   "id": "ae097c70-a0dd-5857-9b23-9937705d681a",
+   "name": "Wait: Cash",
+   "type": "n8n-nodes-base.wait",
+   "typeVersion": 1.1,
+   "position": [
+    3120,
+    0
+   ],
+   "parameters": {
+    "resume": "webhook",
+    "httpMethod": "POST",
+    "options": {}
+   },
+   "webhookId": "fd1d6142-60a5-53a4-98fe-371d92b77d22"
+  },
+  {
+   "id": "b31a68f4-b284-5572-a699-5a3f23bbccd1",
+   "name": "Parse Cash Info",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    3380,
+    170
+   ],
+   "parameters": {
+    "jsCode": "// Resume payload from the console decision endpoint: {secret, text|choice}.\nconst b = $json.body || {};\nconst ok = String(b.secret || '') === $('Pilot Config').first().json.pilot_hook_secret;\nconst t = ok ? String(b.text != null ? b.text : (b.choice && b.choice.label) || '') : '';\nconst invList = t.match(/\\b(\\d{3,6})\\b/g) || [];\nconst inv = invList.length ? invList[invList.length - 1] : null;\nlet amt = null;\nconst nums = (t.match(/\\d+(?:\\.\\d{1,2})?/g) || []).map(Number);\nfor (const n of nums) { if (String(n) !== String(inv)) { amt = n; break; } }\nreturn { json: { cash_amount: amt, cash_invoice: inv } };\n"
+   }
+  },
+  {
+   "id": "1240758c-4ec9-5808-9bff-c94a30357469",
+   "name": "Cash Job By Invoice",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    2860,
+    170
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $('Pilot Config').item.json.bridge_base_url }}/api/checkbot/job-by-invoice",
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={\n  \"invoiceNumber\": {{ JSON.stringify($('Cash Data').item.json.cash_invoice || '') }}\n}",
+    "options": {}
+   }
+  },
+  {
+   "id": "4eb05ef6-f018-5f67-924c-a45fbe50cc91",
+   "name": "Cash Job Found?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    3120,
+    170
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "loose",
+      "version": 3
+     },
+     "conditions": [
+      {
+       "id": "5bcea634",
+       "leftValue": "={{ $json.Found === true }}",
+       "rightValue": "={{ true }}",
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "fa4f1352-2cb3-5ce3-a168-74a42f451c4d",
+   "name": "Cash Find Duplicates",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    3380,
+    340
+   ],
+   "parameters": {
+    "method": "GET",
+    "url": "={{ $('Pilot Config').item.json.console_base_url }}/api/hooks/pilot/find?invoice_number={{ encodeURIComponent($('Cash Data').item.json.cash_invoice || '') }}&amount={{ encodeURIComponent($('Cash Data').item.json.cash_amount || '') }}",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "X-Pilot-Secret",
+       "value": "={{ $('Pilot Config').item.json.pilot_hook_secret }}"
+      }
+     ]
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "7be4ad0c-0209-5ee2-a90f-879389203e11",
+   "name": "Cash Duplicate?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    3640,
+    0
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "loose",
+      "version": 3
+     },
+     "conditions": [
+      {
+       "id": "9409c5a5",
+       "leftValue": "={{ (($json.items || []).filter(function(i){ return i.review_item_id !== $('Trigger Context').item.json.review_item_id; })).length > 0 }}",
+       "rightValue": "={{ true }}",
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "37eb7967-5ac1-542f-9d45-6bfd644c536b",
+   "name": "Final: Cash Already Recorded",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    3900,
+    0
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $('Pilot Config').item.json.console_base_url }}/api/hooks/pilot/final",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "X-Pilot-Secret",
+       "value": "={{ $('Pilot Config').item.json.pilot_hook_secret }}"
+      },
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={\n  \"review_item_id\": \"{{ $('Trigger Context').item.json.review_item_id }}\",\n  \"body\": {{ JSON.stringify('\\u2139 Cash for invoice #' + ($('Cash Data').item.json.cash_invoice || '?') + ' was already recorded \\u2014 see the finished card: ' + ($('Pilot Config').item.json.console_base_url + '/payments/item/' + ((($('Cash Find Duplicates').item.json.items || []).filter(function(i){ return i.review_item_id !== $('Trigger Context').item.json.review_item_id; })[0] || {}).review_item_id || '')) + '. Nothing recorded twice.') }},\n  \"status\": \"duplicate\",\n  \"push\": {{ $('Cash Data').item.json._asked ? false : true }}\n}",
+    "options": {}
+   }
+  },
+  {
+   "id": "24c57769-680d-542e-949f-4608d0621eaa",
+   "name": "Cash Build Row",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    3900,
+    170
+   ],
+   "parameters": {
+    "jsCode": "const p=Object.assign({},$('Parse Check Data').item.json,$('Cash Data').item.json);\nconst job=$('Cash Job By Invoice').item.json;\nconst wh={body:{data:{key:{id:$('Trigger Context').item.json.review_item_id,remoteJid:'console'}}}};\nfunction fmt(v){const n=parseFloat(String(v==null?'':v).replace(/[^0-9.\\-]/g,''));if(isNaN(n))return '?';let q=(Math.round(n*100)/100).toFixed(2).split('.');q[0]=q[0].replace(/\\B(?=(\\d{3})+(?!\\d))/g,',');return q[0]+'.'+q[1];}\nconst amount=p.cash_amount;\nconst inv=String(p.cash_invoice||'');\nconst ptype=(p.payment_hint||'unknown').toString();\nconst typeLabel=ptype==='PIF'?'paid in full':(ptype==='unknown'?'payment':ptype);\nconst jobName=job.CustomerName||'';\nconst jobId=job.JobId;\nconst leadUrl=job.LeadUrl||'';\nconst amtStr='$'+fmt(amount);\nconst notes='Cash payment received \\u2014 '+(jobName||'customer')+' paid '+amtStr+' ('+typeLabel+') \\u2014 invoice #'+inv+'. Logged automatically by check-bot (cash, matched by invoice).';\nconst msg='\\ud83d\\udcb5 *Cash recorded*\\n\\n'+amtStr+' \\u00b7 '+typeLabel+'\\nInvoice #'+inv+'\\nJob: *'+(jobName||'(unknown)')+'*'+(leadUrl?('\\n'+leadUrl):'')+'\\n\\n\\u2705 Recorded in the console\\n\\u2705 Logged to the Moraware job\\nMatched by invoice \\u2014 no action needed.';\nreturn { json: {\n  Status:'confirmed', CheckNumber:'', PayerName:(p.caption_name||p.payer_name||'Cash'), CaptionName:p.caption_name,\n  Amount:amount, PaymentType:ptype, PaymentMethod:'Cash',\n  JobName:jobName, JobId:jobId, MorawareURL:leadUrl, InvoiceNumber:inv, MatchMethod:'cash-invoice:'+(job.Source||''),\n  MessageId:wh.body.data.key.id, GroupJID:wh.body.data.key.remoteJid, ConfidenceFlags:'cash',\n  jobId:jobId, noteText:notes, remoteJid:wh.body.data.key.remoteJid, messageId:wh.body.data.key.id, messageText:msg\n}};\n"
+   }
+  },
+  {
+   "id": "0dea37e5-6121-51cd-89aa-cd9a964157cd",
+   "name": "Update: Cash Details",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    4160,
+    0
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $('Pilot Config').item.json.console_base_url }}/api/hooks/pilot/update",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "X-Pilot-Secret",
+       "value": "={{ $('Pilot Config').item.json.pilot_hook_secret }}"
+      },
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={\n  \"review_item_id\": \"{{ $('Trigger Context').item.json.review_item_id }}\",\n  \"body\": {{ JSON.stringify('Cash matched to ' + ($('Cash Build Row').item.json.JobName || 'job') + ' by invoice #' + ($('Cash Build Row').item.json.InvoiceNumber || '?') + '.') }},\n  \"fields\": {{ JSON.stringify(Object.fromEntries(Object.entries({amount: $('Cash Build Row').item.json.Amount, payer_name: $('Cash Build Row').item.json.PayerName, payment_method: 'cash', invoice_number: $('Cash Build Row').item.json.InvoiceNumber, matched_job_id: String($('Cash Build Row').item.json.JobId || ''), matched_job_name: $('Cash Build Row').item.json.JobName, moraware_url: $('Cash Build Row').item.json.MorawareURL}).filter(function(e){return e[1] !== null && e[1] !== undefined && e[1] !== '';}))) }}\n}",
+    "options": {}
+   }
+  },
+  {
+   "id": "e49e07a5-def8-57d5-826c-285c4b377626",
+   "name": "Cash Post Note",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    4420,
+    0
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $('Pilot Config').item.json.bridge_base_url }}/api/checkbot/create-activity",
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={\n  \"jobId\": {{ $('Cash Build Row').item.json.jobId }},\n  \"notes\": {{ JSON.stringify($('Cash Build Row').item.json.noteText) }},\n  \"activityTypeId\": 17\n}",
+    "options": {}
+   }
+  },
+  {
+   "id": "509843c5-bfe1-56e0-948d-daa2cf4985f2",
+   "name": "Final: Cash Recorded",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    4680,
+    0
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $('Pilot Config').item.json.console_base_url }}/api/hooks/pilot/final",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "X-Pilot-Secret",
+       "value": "={{ $('Pilot Config').item.json.pilot_hook_secret }}"
+      },
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={\n  \"review_item_id\": \"{{ $('Trigger Context').item.json.review_item_id }}\",\n  \"body\": {{ JSON.stringify($('Cash Build Row').item.json.messageText) }},\n  \"status\": \"confirmed\",\n  \"push\": {{ $('Cash Data').item.json._asked ? false : true }}\n}",
+    "options": {}
+   }
+  },
+  {
+   "id": "6eb514c1-9d37-53f8-980c-0211deef8437",
+   "name": "Photo Has Invoice?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.3,
+   "position": [
+    2340,
+    170
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "loose",
+      "version": 3
+     },
+     "conditions": [
+      {
+       "id": "9d4838f6-9692-4e31-b276-5d06e49a8d78",
+       "leftValue": "={{ /^\\d{4}$/.test($json.caption_invoice || '') }}",
+       "rightValue": "={{ true }}",
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "8ccdbe46-2c8c-5a38-8fca-2a6f69215c59",
+   "name": "Photo Job By Invoice",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    2600,
+    170
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $('Pilot Config').item.json.bridge_base_url }}/api/checkbot/job-by-invoice",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={\n  \"invoiceNumber\": {{ JSON.stringify($json.caption_invoice || '') }}\n}",
+    "options": {}
+   }
+  },
+  {
+   "id": "83e0516e-0417-56d3-9f8a-a7bef3a6a1f7",
+   "name": "Photo Job Found?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.3,
+   "position": [
+    2860,
+    340
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "loose",
+      "version": 3
+     },
+     "conditions": [
+      {
+       "id": "0e1a5edd-bf1f-47fb-9649-afce1d471962",
+       "leftValue": "={{ $json.Found === true }}",
+       "rightValue": "={{ true }}",
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "0d84b536-fe39-557d-96eb-297b88a16284",
+   "name": "AC Find Duplicates",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    3120,
+    340
+   ],
+   "parameters": {
+    "method": "GET",
+    "url": "={{ $('Pilot Config').item.json.console_base_url }}/api/hooks/pilot/find?check_number={{ encodeURIComponent($('Parse Check Data').item.json.check_number || '') }}&invoice_number={{ encodeURIComponent($('Parse Check Data').item.json.caption_invoice || '') }}",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "X-Pilot-Secret",
+       "value": "={{ $('Pilot Config').item.json.pilot_hook_secret }}"
+      }
+     ]
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "adb895ef-56b2-5ee5-aadf-d79aca70e2d4",
+   "name": "Fast Path Duplicate?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    3380,
+    510
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "loose",
+      "version": 3
+     },
+     "conditions": [
+      {
+       "id": "b194d4b0",
+       "leftValue": "={{ (($json.items || []).filter(function(i){ return i.review_item_id !== $('Trigger Context').item.json.review_item_id; })).length > 0 }}",
+       "rightValue": "={{ true }}",
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "563a8769-f58b-54bf-9510-177db2df4907",
+   "name": "Ask: Duplicate (Fast Path)",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    3640,
+    170
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $('Pilot Config').item.json.console_base_url }}/api/hooks/pilot/question",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "X-Pilot-Secret",
+       "value": "={{ $('Pilot Config').item.json.pilot_hook_secret }}"
+      },
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={\n  \"review_item_id\": \"{{ $('Trigger Context').item.json.review_item_id }}\",\n  \"body\": {{ JSON.stringify('\\u26a0 This check was already uploaded \\u2014 check #' + ($('Parse Check Data').item.json.check_number || '?') + ' for invoice #' + ($('Parse Check Data').item.json.caption_invoice || '?') + ' is on an earlier card. See the finished card: ' + ($('Pilot Config').item.json.console_base_url + '/payments/item/' + ((($('AC Find Duplicates').item.json.items || []).filter(function(i){ return i.review_item_id !== $('Trigger Context').item.json.review_item_id; })[0] || {}).review_item_id || '')) + ' \\u2014 record this one anyway?') }},\n  \"candidates\": {{ JSON.stringify([{label: 'Record anyway: ' + ($('Photo Job By Invoice').item.json.CustomerName || 'this job'), sublabel: 'It is a different payment', job_id: String($('Photo Job By Invoice').item.json.JobId), moraware_url: $('Photo Job By Invoice').item.json.LeadUrl || null}, {label: 'Ignore \\u2014 duplicate', sublabel: 'Nothing will be recorded', job_id: null, moraware_url: null}]) }},\n  \"resume_url\": \"{{ $execution.resumeUrl }}\",\n  \"allowed_freeform\": false,\n  \"format_hint\": null,\n  \"push\": true\n}",
+    "options": {}
+   }
+  },
+  {
+   "id": "7dab58e6-5325-56d0-b06d-8098b844afaa",
+   "name": "QB Gate (Fast Path)",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    3640,
+    340
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "loose",
+      "version": 3
+     },
+     "conditions": [
+      {
+       "id": "af7ba53c",
+       "leftValue": "={{ $('Pilot Config').item.json.qb_verification_enabled === true }}",
+       "rightValue": "={{ true }}",
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "ae14c31d-6db2-550d-92ee-b84b76c09615",
+   "name": "AC Get QB Invoice",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    3900,
+    340
+   ],
+   "parameters": {
+    "url": "={{ $('Pilot Config').item.json.qb_company_url }}/query?query=SELECT * FROM Invoice WHERE DocNumber = '{{ $('Parse Check Data').item.json.caption_invoice }}'&minorversion=65",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "quickBooksOAuth2Api",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Accept",
+       "value": "application/json"
+      }
+     ]
+    },
+    "options": {}
+   },
+   "disabled": true
+  },
+  {
+   "id": "0bb0be38-abcd-5763-9894-4985b749983e",
+   "name": "AC Build Payment Query",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    4160,
+    170
+   ],
+   "parameters": {
+    "jsCode": "// Pull the invoice off the QB response and list its linked PAYMENT txn ids.\nconst resp = ($json && $json.QueryResponse) || {};\nconst inv = (resp.Invoice && resp.Invoice[0]) || null;\nlet ids = [];\nif (inv && Array.isArray(inv.LinkedTxn)) {\n  ids = inv.LinkedTxn\n    .filter(t => t && t.TxnType === 'Payment' && t.TxnId)\n    .map(t => String(t.TxnId));\n}\nconst idClause = ids.length\n  ? ('Id IN (' + ids.map(i => \"'\" + i + \"'\").join(',') + ')')\n  : \"Id = '0'\";\nreturn { json: { idClause: idClause, linkedPaymentIds: ids } };\n"
+   }
+  },
+  {
+   "id": "720407e9-08a9-5439-bcec-91ea72f5d908",
+   "name": "AC Get QB Payments",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    4420,
+    170
+   ],
+   "parameters": {
+    "url": "={{ $('Pilot Config').item.json.qb_company_url }}/query?query=SELECT * FROM Payment WHERE {{ $json.idClause }}&minorversion=65",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "quickBooksOAuth2Api",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Accept",
+       "value": "application/json"
+      }
+     ]
+    },
+    "options": {}
+   },
+   "disabled": true
+  },
+  {
+   "id": "ca4250c9-59f9-57b8-92f1-d667fc809615",
+   "name": "AC Build Row",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    3900,
+    510
+   ],
+   "parameters": {
+    "mode": "runOnceForEachItem",
+    "jsCode": "const p=$('Parse Check Data').item.json;\nconst job=$('Photo Job By Invoice').item.json;\nconst wh={body:{data:{key:{id:$('Trigger Context').item.json.review_item_id,remoteJid:'console'}}}};\nfunction fmt(v){const n=parseFloat(String(v==null?'':v).replace(/[^0-9.\\-]/g,''));if(isNaN(n))return '?';let q=(Math.round(n*100)/100).toFixed(2).split('.');q[0]=q[0].replace(/\\B(?=(\\d{3})+(?!\\d))/g,',');return q[0]+'.'+q[1];}\nconst num=v=>{const n=parseFloat(String(v==null?'':v).replace(/[^0-9.\\-]/g,''));return isNaN(n)?null:n;};\nfunction money(n){return n==null?'$?':('$'+fmt(n));}\nconst EPS=0.005;\nconst inv=p.caption_invoice||''; const hintType=(p.payment_hint||'unknown').toString();\nconst jobName=job.CustomerName||''; const jobId=job.JobId; const leadUrl=job.LeadUrl||''; const amtStr='$'+fmt(p.amount);\n\n// ----- QB already-recorded detection (same rule as Classify Payment) -----\nlet qbInv=null;\ntry{ qbInv=$('AC Get QB Invoice').item.json.QueryResponse.Invoice[0]||null; }catch(e){ qbInv=null; }\nconst qbReachable=qbInv!==null;\nconst T=qbInv?num(qbInv.TotalAmt):null;\nconst B=qbInv?num(qbInv.Balance):null;\nlet pays=[];\ntry{ const arr=$('AC Get QB Payments').item.json.QueryResponse.Payment; if(Array.isArray(arr)) pays=arr.map(x=>({refNum:String(x.PaymentRefNum==null?'':x.PaymentRefNum).trim(),amt:num(x.TotalAmt)})); }catch(e){ pays=[]; }\nconst checkNum=String(p.check_number==null?'':p.check_number).trim();\nconst A=num(p.amount);\nconst matched=pays.find(x=>x.refNum && x.refNum===checkNum);\nconst inQB=!!matched;\nconst owedNow=(B!==null)?B:null;\n\n// ----- classify from QB when the caption gave no hint (same F-based rule as Classify Payment) -----\nfunction fullContract(invObj){\n  if(!invObj||!Array.isArray(invObj.Line)) return null;\n  let s=0, frac=false;\n  for(const ln of invObj.Line){\n    const dt=String((ln&&ln.DetailType)||'');\n    if(dt==='DiscountLineDetail'&&ln.Amount!=null){ s-=Number(ln.Amount)||0; continue; }\n    const dd=ln&&ln.SalesItemLineDetail;\n    if(dt!=='SalesItemLineDetail'||!dd) continue;\n    const qty=(dd.Qty!=null)?Number(dd.Qty):null;\n    const unit=(dd.UnitPrice!=null)?Number(dd.UnitPrice):null;\n    const a=(ln.Amount!=null)?Number(ln.Amount):0;\n    const nm=String(((dd.ItemRef&&dd.ItemRef.name)||'')+' '+(ln.Description||''));\n    const feeName=/credit\\s*card|credit\\s*c\\s*%|cc\\s*fee|card\\s*fee|surcharge|processing\\s*fee|convenience\\s*fee/i.test(nm);\n    const feeQty=(qty!=null&&qty>0&&qty<0.2);\n    if(feeName||feeQty) continue; // payment-method fees are not part of the contract\n    if(qty!=null&&qty>0&&qty<1&&unit!=null&&unit>0){ s+=unit; frac=true; }\n    else s+=a;\n  }\n  if(!frac) return null;\n  return Math.round(s*100)/100;\n}\nlet qbType=null;\nif(T!==null&&B!==null&&A!==null){\n  const F0=fullContract(qbInv);\n  const F=(F0!=null)?Math.max(F0,T):T; // full contract (Rate x 1); = TotalAmt when no fractional-qty lines\n  const paidSoFar=T-B;\n  let priorPaid=inQB?(paidSoFar-(A||0)):paidSoFar;\n  if(priorPaid<EPS) priorPaid=0;\n  const cumAfter=priorPaid+A;\n  if(cumAfter>=F-EPS) qbType=priorPaid>EPS?'remainder':'PIF';\n  else qbType=priorPaid>EPS?'progress':'deposit';\n}\nconst ptype=qbType||((hintType!=='unknown')?hintType:'unknown');\nconst typeLabel=ptype==='PIF'?'paid in full':(ptype==='unknown'?'payment':(ptype==='progress'?'progress payment':ptype));\n\nlet qbLine;\nif(inQB){\n  qbLine=(owedNow!==null && owedNow<=EPS)\n    ? '\\u2705 Already in QuickBooks \\u00b7 invoice paid in full'\n    : (owedNow!==null ? '\\u2705 Already in QuickBooks \\u00b7 '+money(owedNow)+' still owing' : '\\u2705 Already in QuickBooks');\n}else if(qbReachable && owedNow!==null){\n  const after=Math.max(0,owedNow-(A||0));\n  qbLine=(after<=EPS)\n    ? '\\u23f3 *Not yet in QuickBooks* \\u2014 please enter this payment (QuickBooks still shows '+money(owedNow)+' owing; entering it pays the invoice in full)'\n    : '\\u23f3 *Not yet in QuickBooks* \\u2014 please enter this payment (after you do, '+money(after)+' will remain)';\n}else{\n  qbLine='\\u23f3 *Not yet in QuickBooks* \\u2014 please enter this payment when you can';\n}\nconst closing = inQB\n  ? 'Matched by invoice \\u2014 recorded in the console and noted on the job. No action needed.'\n  : 'Matched by invoice \\u2014 recorded in the console and noted on the job.';\n\nconst notes='Payment received \\u2014 '+(jobName||'customer')+' paid '+amtStr+' ('+typeLabel+') \\u2014 by Check'+(inv?(' \\u00b7 invoice #'+inv):'')+'. Logged automatically by check-bot (matched by invoice).';\nconst msg='\\u2705 *Updated \\u2014 check recorded*\\n\\nCheck #'+(p.check_number||'?')+' \\u00b7 '+amtStr+' \\u00b7 '+typeLabel+'\\nInvoice #'+(inv||'?')+'\\nJob: *'+(jobName||'(unknown)')+'*'+(leadUrl?('\\n'+leadUrl):'')+'\\n\\n'+qbLine+'\\n'+closing;\nreturn { json: {\n  Status:'confirmed', CheckNumber:p.check_number, PayerName:p.payer_name, CaptionName:p.caption_name,\n  Amount:p.amount, PaymentType:ptype, PaymentMethod:'Check',\n  JobName:jobName, JobId:jobId, MorawareURL:leadUrl, InvoiceNumber:inv, MatchMethod:'invoice:'+(job.Source||''),\n  MessageId:wh.body.data.key.id, GroupJID:wh.body.data.key.remoteJid, ConfidenceFlags:p.confidence_flags,\n  jobId:jobId, noteText:notes, remoteJid:wh.body.data.key.remoteJid, messageId:wh.body.data.key.id, messageText:msg,\n  inQB:inQB, qbReachable:qbReachable\n}};\n"
+   }
+  },
+  {
+   "id": "ba011385-76ec-59b4-95f2-fa8459cea9aa",
+   "name": "Update: Fast Path Details",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    4160,
+    340
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $('Pilot Config').item.json.console_base_url }}/api/hooks/pilot/update",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "X-Pilot-Secret",
+       "value": "={{ $('Pilot Config').item.json.pilot_hook_secret }}"
+      },
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={\n  \"review_item_id\": \"{{ $('Trigger Context').item.json.review_item_id }}\",\n  \"body\": {{ JSON.stringify('Matched to ' + ($('AC Build Row').item.json.JobName || 'job') + ' by invoice #' + ($('AC Build Row').item.json.InvoiceNumber || '?') + '.') }},\n  \"fields\": {{ JSON.stringify(Object.fromEntries(Object.entries({amount: $('AC Build Row').item.json.Amount, check_number: $('AC Build Row').item.json.CheckNumber, payer_name: $('AC Build Row').item.json.PayerName, caption_name: $('AC Build Row').item.json.CaptionName, invoice_number: $('AC Build Row').item.json.InvoiceNumber, payment_type: ($('AC Build Row').item.json.PaymentType !== 'unknown' ? $('AC Build Row').item.json.PaymentType : null), matched_job_id: String($('AC Build Row').item.json.JobId || ''), matched_job_name: $('AC Build Row').item.json.JobName, moraware_url: $('AC Build Row').item.json.MorawareURL}).filter(function(e){return e[1] !== null && e[1] !== undefined && e[1] !== '';}))) }}\n}",
+    "options": {}
+   }
+  },
+  {
+   "id": "b8772fb3-9cdc-5822-a5e1-2de7ff968274",
+   "name": "AC Post Note",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    4420,
+    340
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $('Pilot Config').item.json.bridge_base_url }}/api/checkbot/create-activity",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={\n  \"jobId\": {{ $('AC Build Row').item.json.jobId }},\n  \"notes\": {{ JSON.stringify($('AC Build Row').item.json.noteText) }},\n  \"activityTypeId\": 17\n}",
+    "options": {}
+   }
+  },
+  {
+   "id": "f068bea0-4b99-52f2-a384-5c10078a88f4",
+   "name": "Final: Fast Path Recorded",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    4680,
+    170
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $('Pilot Config').item.json.console_base_url }}/api/hooks/pilot/final",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "X-Pilot-Secret",
+       "value": "={{ $('Pilot Config').item.json.pilot_hook_secret }}"
+      },
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={\n  \"review_item_id\": \"{{ $('Trigger Context').item.json.review_item_id }}\",\n  \"body\": {{ JSON.stringify($('AC Build Row').item.json.messageText) }},\n  \"status\": \"confirmed\",\n  \"push\": true\n}",
+    "options": {}
+   }
+  },
+  {
+   "id": "5c8ba3be-0991-510b-bc5f-b3485a60a589",
+   "name": "Smart Search",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    2600,
+    340
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $('Pilot Config').item.json.bridge_base_url }}/api/checkbot/smart-search",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={\n  \"first_name\": \"{{ $('Parse Check Data').item.json.first_name || '' }}\",\n  \"middle_name\": \"{{ $('Parse Check Data').item.json.middle_name || '' }}\",\n  \"last_name\": \"{{ $('Parse Check Data').item.json.last_name || '' }}\",\n  \"entity_type\": \"{{ $('Parse Check Data').item.json.entity_type || 'individual' }}\",\n  \"street_number\": \"{{ $('Parse Check Data').item.json.street_number || '' }}\",\n  \"street_name\": \"{{ $('Parse Check Data').item.json.street_name || '' }}\",\n  \"zip\": \"{{ $('Parse Check Data').item.json.zip || '' }}\",\n  \"additional_names\": {{ JSON.stringify($('Parse Check Data').item.json.additional_names || []) }}\n}",
+    "options": {}
+   }
+  },
+  {
+   "id": "c73a5fab-3261-5c30-8213-8231c6523d9f",
+   "name": "AV Seed",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    2860,
+    510
+   ],
+   "parameters": {
+    "jsCode": "// AV Seed - carries the smart-search response forward and derives the 2-word customer name\nconst r = $input.first().json;\nconst p = $('Parse Check Data').first().json;\nconst raw = String(p.payer_name || p.display_name || '').trim();\nconst cleaned = raw\n  .replace(/\\b(llc|l\\.l\\.c\\.?|inc|incorporated|corp|corporation|co|company|ltd|lp|llp|pllc|pc|pa)\\b\\.?/gi, ' ')\n  .replace(/[^A-Za-z0-9\\s'&-]/g, ' ')\n  .replace(/\\s+/g, ' ').trim();\nconst toks = cleaned.split(/\\s+/).filter(t => t.length >= 2);\nlet first2 = '';\nif (toks.length >= 2) first2 = toks[0] + ' ' + toks[1];\nelse if (toks.length === 1 && toks[0].length >= 3) first2 = toks[0];\nreturn [{ json: Object.assign({}, r, { _first2: first2, _amount: (p.amount != null ? Number(p.amount) : null) }) }];"
+   }
+  },
+  {
+   "id": "ce54a625-ca55-5b35-912d-527ce454a814",
+   "name": "AV Fallback Find",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    3120,
+    510
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $('Pilot Config').item.json.bridge_base_url }}/api/checkbot/find-job-by-name",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={\n  \"job_name\": {{ JSON.stringify($json._first2 || '') }},\n  \"limit\": 5\n}",
+    "options": {}
+   }
+  },
+  {
+   "id": "1c30c34b-c50f-52d7-bb99-d8b66a8ae417",
+   "name": "AV Merge Fanout",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    3380,
+    680
+   ],
+   "parameters": {
+    "jsCode": "// AV Merge Fanout - union smart-search matches with 2-word name matches, one item per candidate job\nconst seed = $('AV Seed').first().json;\nlet fb = {};\ntry { fb = $input.first().json || {}; } catch (e) { fb = {}; }\nconst primary = Array.isArray(seed.Matches) ? seed.Matches : [];\nconst fallback = (fb && Array.isArray(fb.Matches)) ? fb.Matches : [];\nconst seen = new Set(); const cands = [];\nfor (const m of primary.concat(fallback)) {\n  if (!m || !m.JobId || seen.has(m.JobId)) continue;\n  seen.add(m.JobId);\n  cands.push({ JobId: m.JobId, CustomerName: m.CustomerName || '', LeadUrl: m.LeadUrl || '',\n               NameMatchStrength: m.NameMatchStrength || 'weak', CreationDate: m.CreationDate || null,\n               AddressLine2: m.AddressLine2 || null });\n  if (cands.length >= 4) break;\n}\nif (!cands.length) return [{ json: { _empty: true, JobId: 0, _amount: seed._amount } }];\nreturn cands.map((c, i) => ({ json: Object.assign({ _idx: i, _amount: seed._amount, _empty: false }, c) }));"
+   }
+  },
+  {
+   "id": "6fc3f7c3-46e1-566d-b6a7-fe3a1747e4b8",
+   "name": "QB Gate (AV)",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    3640,
+    510
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "loose",
+      "version": 3
+     },
+     "conditions": [
+      {
+       "id": "f64581c3",
+       "leftValue": "={{ $('Pilot Config').first().json.qb_verification_enabled === true }}",
+       "rightValue": "={{ true }}",
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "35b2fd2f-9442-56fd-ab24-fc74b5ce6e85",
+   "name": "AV Get Job Invoices",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    3900,
+    680
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $('Pilot Config').item.json.bridge_base_url }}/api/checkbot/invoice-by-job",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={\n  \"jobId\": {{ $json.JobId || 0 }}\n}",
+    "options": {}
+   }
+  },
+  {
+   "id": "96e42b5d-e78f-51b8-ad20-46f75e95751f",
+   "name": "AV Build QB Query",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    4160,
+    510
+   ],
+   "parameters": {
+    "mode": "runOnceForEachItem",
+    "jsCode": "// AV Build QB Query - one QB query per candidate covering ALL its Moraware invoice numbers\nconst inv = $json || {};\nlet nums = Array.isArray(inv.InvoiceNumbers) ? inv.InvoiceNumbers : [];\nnums = nums.map(x => String(x || '').replace(/[^0-9]/g, '')).filter(x => x.length >= 3 && x.length <= 6);\nnums = Array.from(new Set(nums)).slice(0, 15);\nconst cand = $('AV Merge Fanout').item.json;\nconst list = nums.length ? nums.map(n => \"'\" + n + \"'\").join(',') : \"'__none__'\";\nconst q = 'SELECT * FROM Invoice WHERE DocNumber IN (' + list + ')';\nreturn { json: Object.assign({}, cand, { _invNums: nums,\n  _qbUrl: ($('Pilot Config').first().json.qb_company_url + '/query?query=') + q + '&minorversion=65' }) };"
+   }
+  },
+  {
+   "id": "2ca5087d-8d4b-5978-a11a-04fa7185f019",
+   "name": "AV Get QB Amounts",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    4420,
+    510
+   ],
+   "parameters": {
+    "url": "={{ $json._qbUrl }}",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "quickBooksOAuth2Api",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Accept",
+       "value": "application/json"
+      }
+     ]
+    },
+    "options": {}
+   },
+   "disabled": true
+  },
+  {
+   "id": "310946ed-8d86-5d61-a400-c5b8295bed76",
+   "name": "AV Collector",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    3900,
+    850
+   ],
+   "parameters": {
+    "jsCode": "// AV Collector - score the check amount against every invoice of every candidate\nconst fan = $('AV Merge Fanout').all();\nconst qb = $input.all();\nconst seed = $('AV Seed').first().json;\nconst orig = Object.assign({}, seed); delete orig._first2; delete orig._amount;\nconst amt = (seed._amount != null) ? Number(seed._amount) : null;\n\nfunction invoicesFrom(j) { try { const a = j.QueryResponse && j.QueryResponse.Invoice; return Array.isArray(a) ? a : []; } catch (e) { return []; } }\n\nconst hits = [];\nif (amt != null && !isNaN(amt)) {\n  for (let i = 0; i < fan.length; i++) {\n    const cand = fan[i].json; if (cand._empty) continue;\n    const invs = invoicesFrom((qb[i] && qb[i].json) || {});\n    let best = null;\n    for (const v of invs) {\n      const T = (v.TotalAmt != null) ? Number(v.TotalAmt) : null;\n      const B = (v.Balance != null) ? Number(v.Balance) : null;\n      let kind = null;\n      if (T != null && Math.abs(amt - T) <= 0.005) kind = 'full';\n      else if (B != null && B > 0.005 && Math.abs(amt - B) <= 0.005) kind = 'remainder';\n      else if (T != null && Math.abs(amt - 0.75 * T) <= 1.00) kind = 'deposit';\n      if (!kind) continue;\n      const rank = { full: 3, remainder: 2, deposit: 1 }[kind];\n      if (!best || rank > best.rank) best = { rank, kind, doc: String(v.DocNumber || ''), T, B };\n    }\n    if (best) hits.push({ cand, inv: best.doc, kind: best.kind, T: best.T, B: best.B });\n  }\n}\n\nif (hits.length === 1) {\n  const h = hits[0];\n  const m = Object.assign({}, h.cand); m.NameMatchStrength = 'strong';\n  delete m._idx; delete m._amount; delete m._empty;\n  return [{ json: {\n    Matches: [m], MatchedStrategy: 'amount:' + h.kind, Ambiguous: false,\n    _amountInvoice: h.inv, _amountKind: h.kind, _amountTotal: h.T, _amountBalance: h.B,\n    _skipped_note: seed._skipped_note || ''\n  } }];\n}\nif (hits.length > 1) {\n  const ms = hits.map(h => { const m = Object.assign({}, h.cand); m.NameMatchStrength = 'weak';\n    m._hitInvoice = h.inv; m._hitKind = h.kind; delete m._idx; delete m._amount; delete m._empty; return m; });\n  return [{ json: { Matches: ms, MatchedStrategy: 'amount-multi', Ambiguous: true, _skipped_note: seed._skipped_note || '' } }];\n}\nconst origMatches = Array.isArray(orig.Matches) ? orig.Matches : [];\nif (origMatches.length) return [{ json: orig }];\nconst fbCands = fan.filter(f => !f.json._empty).map(f => { const m = Object.assign({}, f.json);\n  m.NameMatchStrength = m.NameMatchStrength || 'weak'; delete m._idx; delete m._amount; delete m._empty; return m; });\nif (fbCands.length) return [{ json: { Matches: fbCands, MatchedStrategy: 'name2words', Ambiguous: fbCands.length > 1, _skipped_note: orig._skipped_note || '' } }];\nreturn [{ json: orig }];"
+   }
+  },
+  {
+   "id": "7376d55c-5b50-5f18-98d0-397bf8c59d66",
+   "name": "QB Gate (Vet)",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    4160,
+    680
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "loose",
+      "version": 3
+     },
+     "conditions": [
+      {
+       "id": "103915de",
+       "leftValue": "={{ $('Pilot Config').first().json.qb_verification_enabled === true }}",
+       "rightValue": "={{ true }}",
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "98a7d8ff-d58c-5cc4-9eb8-0299fcdef48d",
+   "name": "Vet Prep",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    4420,
+    680
+   ],
+   "parameters": {
+    "jsCode": "const r=$input.item.json;\nconst matches=Array.isArray(r.Matches)?r.Matches:[];\nconst strategy=r.MatchedStrategy||'none';\nconst ambiguous=!!r.Ambiguous;\nconst addressAmbiguous=(strategy==='address'&&ambiguous&&matches.length>1);\nfunction pick(list){return list.length?list[0]:null;}\nlet chosen=null;\nif(matches.length&&!addressAmbiguous){\n  const strong=matches.filter(m=>m.NameMatchStrength==='strong');\n  chosen=strong.length?pick(strong):pick(matches);\n}\nlet shortName='';\nif(chosen&&chosen.CustomerName){\n  const tok=String(chosen.CustomerName).replace(/[^A-Za-z0-9 ]+/g,' ').trim().split(/\\s+/)[0]||'';\n  if(tok.length>=3) shortName=tok;\n}\nconst dontVet = !!r._amountInvoice || !!r.Ambiguous || String(r.MatchedStrategy||'').indexOf('amount')===0;\nreturn { json: Object.assign({}, r, { _cand: chosen, _hasCand: !!(chosen&&chosen.JobId) && !dontVet, _shortName: shortName }) };"
+   }
+  },
+  {
+   "id": "9683cfba-34a3-5eb4-95c4-5624748202fe",
+   "name": "Vet Has Candidate?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    4680,
+    340
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "loose",
+      "version": 3
+     },
+     "conditions": [
+      {
+       "id": "abdba917",
+       "leftValue": "={{ $json._hasCand === true }}",
+       "rightValue": "={{ true }}",
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "34aba1e1-f680-5b37-89db-26338d8a4cef",
+   "name": "Vet Get Invoice",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    4940,
+    0
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $('Pilot Config').item.json.bridge_base_url }}/api/checkbot/invoice-by-job",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={\n  \"jobId\": {{ $('Vet Prep').item.json._cand.JobId }}\n}",
+    "options": {}
+   }
+  },
+  {
+   "id": "f53a3f85-e39b-5145-b0e7-838b9645f772",
+   "name": "Vet QB Invoice",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    5200,
+    0
+   ],
+   "parameters": {
+    "url": "={{ $('Pilot Config').item.json.qb_company_url }}/query?query=SELECT * FROM Invoice WHERE DocNumber = '{{ $('Vet Get Invoice').item.json.InvoiceNumber || '' }}'&minorversion=65",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "quickBooksOAuth2Api",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Accept",
+       "value": "application/json"
+      }
+     ]
+    },
+    "options": {}
+   },
+   "disabled": true
+  },
+  {
+   "id": "1abbee2a-c4e7-5b32-865a-7fd73e131b56",
+   "name": "Vet Decide",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    5460,
+    0
+   ],
+   "parameters": {
+    "jsCode": "function fullContract(invObj){\n  if(!invObj||!Array.isArray(invObj.Line)) return null;\n  let s=0, frac=false;\n  for(const ln of invObj.Line){\n    const dt=String((ln&&ln.DetailType)||'');\n    if(dt==='DiscountLineDetail'&&ln.Amount!=null){ s-=Number(ln.Amount)||0; continue; }\n    const dd=ln&&ln.SalesItemLineDetail;\n    if(dt!=='SalesItemLineDetail'||!dd) continue;\n    const qty=(dd.Qty!=null)?Number(dd.Qty):null;\n    const unit=(dd.UnitPrice!=null)?Number(dd.UnitPrice):null;\n    const a=(ln.Amount!=null)?Number(ln.Amount):0;\n    const nm=String(((dd.ItemRef&&dd.ItemRef.name)||'')+' '+(ln.Description||''));\n    const feeName=/credit\\s*card|credit\\s*c\\s*%|cc\\s*fee|card\\s*fee|surcharge|processing\\s*fee|convenience\\s*fee/i.test(nm);\n    const feeQty=(qty!=null&&qty>0&&qty<0.2);\n    if(feeName||feeQty) continue; // payment-method fees are not part of the contract\n    if(qty!=null&&qty>0&&qty<1&&unit!=null&&unit>0){ s+=unit; frac=true; }\n    else s+=a;\n  }\n  if(!frac) return null;\n  return Math.round(s*100)/100;\n}\nconst raw=$('Vet Prep').item.json;\nlet invRes={}; try{ invRes=$('Vet Get Invoice').item.json||{}; }catch(e){ invRes={}; }\nconst moraInv=String(invRes.InvoiceNumber||'').trim();\nlet qbInv=null; try{ qbInv=$json.QueryResponse.Invoice[0]||null; }catch(e){ qbInv=null; }\nconst T=(qbInv&&qbInv.TotalAmt!=null)?Number(qbInv.TotalAmt):null;\nconst B=(qbInv&&qbInv.Balance!=null)?Number(qbInv.Balance):null;\nconst F0=fullContract(qbInv);\nconst F=(F0!=null&&T!=null)?Math.max(F0,T):((F0!=null)?F0:T);\nconst contractOpen=(F!=null&&T!=null&&F>T+0.005);\nconst paidInFull=(qbInv!==null&&moraInv!==''&&B!==null&&B<=0.005&&!contractOpen);\nreturn { json: Object.assign({}, raw, { _skip: paidInFull, _skipInv: paidInFull?moraInv:'', _skipJobId: raw._cand?raw._cand.JobId:null, _skipJobName: raw._cand?(raw._cand.CustomerName||''):'' }) };"
+   }
+  },
+  {
+   "id": "e23dbb0b-c119-507a-b908-3c628aac6062",
+   "name": "Vet Skip?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    5720,
+    0
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "loose",
+      "version": 3
+     },
+     "conditions": [
+      {
+       "id": "07986ce8",
+       "leftValue": "={{ $json._skip === true }}",
+       "rightValue": "={{ true }}",
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "05a409bf-f20e-58af-a808-84b6cb1fe44b",
+   "name": "Rescue Find Jobs",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    5980,
+    0
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $('Pilot Config').item.json.bridge_base_url }}/api/checkbot/find-job-by-name",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={\n  \"job_name\": {{ JSON.stringify($('Vet Decide').item.json._shortName || '') }},\n  \"limit\": 5\n}",
+    "options": {}
+   }
+  },
+  {
+   "id": "d2f4c274-dbed-5f53-81d1-2018ded7b045",
+   "name": "Rescue Prep",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    6240,
+    0
+   ],
+   "parameters": {
+    "jsCode": "const prev=$('Vet Decide').item.json;\nconst res=$json||{};\nconst list=Array.isArray(res.Matches)?res.Matches:[];\nconst skipId=prev._skipJobId;\nconst cands=list.filter(m=>m&&m.JobId&&m.JobId!==skipId);\nconst rc=cands.length?cands[0]:null;\nreturn { json: Object.assign({}, prev, { _rcand: rc, _rHas: !!rc }) };"
+   }
+  },
+  {
+   "id": "da8cb3a6-ad96-5971-a164-cf2224c96b35",
+   "name": "Rescue Has Candidate?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    6500,
+    0
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "loose",
+      "version": 3
+     },
+     "conditions": [
+      {
+       "id": "416b4e8b",
+       "leftValue": "={{ $json._rHas === true }}",
+       "rightValue": "={{ true }}",
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "bfdd203d-8641-56fc-a6d8-4a336a11d9bc",
+   "name": "Rescue Get Invoice",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    6760,
+    0
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $('Pilot Config').item.json.bridge_base_url }}/api/checkbot/invoice-by-job",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={\n  \"jobId\": {{ $('Rescue Prep').item.json._rcand.JobId }}\n}",
+    "options": {}
+   }
+  },
+  {
+   "id": "5b4eb8ff-0867-5d7d-b40e-d17333b2b5f9",
+   "name": "Rescue QB Invoice",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    7020,
+    0
+   ],
+   "parameters": {
+    "url": "={{ $('Pilot Config').item.json.qb_company_url }}/query?query=SELECT * FROM Invoice WHERE DocNumber = '{{ $('Rescue Get Invoice').item.json.InvoiceNumber || '' }}'&minorversion=65",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "quickBooksOAuth2Api",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Accept",
+       "value": "application/json"
+      }
+     ]
+    },
+    "options": {}
+   },
+   "disabled": true
+  },
+  {
+   "id": "5caab7c0-5a31-5398-b84a-667453bee97f",
+   "name": "Rescue Decide",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    7280,
+    0
+   ],
+   "parameters": {
+    "jsCode": "function fullContract(invObj){\n  if(!invObj||!Array.isArray(invObj.Line)) return null;\n  let s=0, frac=false;\n  for(const ln of invObj.Line){\n    const dt=String((ln&&ln.DetailType)||'');\n    if(dt==='DiscountLineDetail'&&ln.Amount!=null){ s-=Number(ln.Amount)||0; continue; }\n    const dd=ln&&ln.SalesItemLineDetail;\n    if(dt!=='SalesItemLineDetail'||!dd) continue;\n    const qty=(dd.Qty!=null)?Number(dd.Qty):null;\n    const unit=(dd.UnitPrice!=null)?Number(dd.UnitPrice):null;\n    const a=(ln.Amount!=null)?Number(ln.Amount):0;\n    const nm=String(((dd.ItemRef&&dd.ItemRef.name)||'')+' '+(ln.Description||''));\n    const feeName=/credit\\s*card|credit\\s*c\\s*%|cc\\s*fee|card\\s*fee|surcharge|processing\\s*fee|convenience\\s*fee/i.test(nm);\n    const feeQty=(qty!=null&&qty>0&&qty<0.2);\n    if(feeName||feeQty) continue; // payment-method fees are not part of the contract\n    if(qty!=null&&qty>0&&qty<1&&unit!=null&&unit>0){ s+=unit; frac=true; }\n    else s+=a;\n  }\n  if(!frac) return null;\n  return Math.round(s*100)/100;\n}\nconst p=$('Rescue Prep').item.json;\nlet invRes={}; try{ invRes=$('Rescue Get Invoice').item.json||{}; }catch(e){ invRes={}; }\nconst moraInv=String(invRes.InvoiceNumber||'').trim();\nlet qbInv=null; try{ qbInv=$json.QueryResponse.Invoice[0]||null; }catch(e){ qbInv=null; }\nconst T=(qbInv&&qbInv.TotalAmt!=null)?Number(qbInv.TotalAmt):null;\nconst B=(qbInv&&qbInv.Balance!=null)?Number(qbInv.Balance):null;\nconst F0=fullContract(qbInv);\nconst F=(F0!=null&&T!=null)?Math.max(F0,T):((F0!=null)?F0:T);\nconst contractOpen=(F!=null&&T!=null&&F>T+0.005);\nconst alsoPaid=(qbInv!==null&&moraInv!==''&&B!==null&&B<=0.005&&!contractOpen);\nconst note='skipped '+(p._skipJobName||'a matched job')+' (invoice #'+(p._skipInv||'?')+' already paid in full)';\nif(p._rcand&&!alsoPaid){\n  const m=Object.assign({}, p._rcand);\n  if(!m.NameMatchStrength) m.NameMatchStrength='weak';\n  return { json: { Matches: [m], MatchedStrategy: 'rescue:'+(p.MatchedStrategy||'none'), Ambiguous: false, _skipped_note: note } };\n}\nreturn { json: { Matches: [], MatchedStrategy: (p.MatchedStrategy||'none')+'+rescue-exhausted', Ambiguous: false, _skipped_note: note+'; the other job found for this customer is also paid in full' } };"
+   }
+  },
+  {
+   "id": "564e8de2-171d-5b24-9353-fd319f9ea30a",
+   "name": "Rescue None",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    6760,
+    170
+   ],
+   "parameters": {
+    "jsCode": "const p=$('Rescue Prep').item.json;\nconst note='skipped '+(p._skipJobName||'a matched job')+' \\u2014 invoice #'+(p._skipInv||'?')+' is already paid in full, and no other job was found for this customer';\nreturn { json: { Matches: [], MatchedStrategy: (p.MatchedStrategy||'none')+'+rescue-none', Ambiguous: false, _skipped_note: note } };"
+   }
+  },
+  {
+   "id": "4ad85cfd-0444-52a8-8c59-e0ac7cabcf59",
+   "name": "Pick Best Match",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    4420,
+    850
+   ],
+   "parameters": {
+    "mode": "runOnceForEachItem",
+    "jsCode": "\nconst r = $input.item.json;\nconst matches = Array.isArray(r.Matches) ? r.Matches : [];\nconst strategy = r.MatchedStrategy || 'none';\nconst ambiguous = !!r.Ambiguous;\n\nfunction pick(list){ return list.length ? list[0] : null; } // already newest-first\n\nlet chosen=null, chosenKind='none';\nif (matches.length){\n  const strong = matches.filter(m => m.NameMatchStrength === 'strong');\n  if (strong.length){ chosen = pick(strong); chosenKind='strong'; }\n  else { chosen = pick(matches); chosenKind='weak'; }\n}\n\n// address-ambiguous: don't auto-pick one; force the manager to choose a unit\nconst addressAmbiguous = (strategy === 'address' && ambiguous && matches.length > 1);\nconst amountAmbiguous = (strategy === 'amount-multi' && matches.length > 1);\nconst nameAmbiguous = (strategy === 'name2words' && ambiguous && matches.length > 1);\n\nreturn { json: {\n  found: matches.length > 0,\n  strategy,\n  ambiguous: addressAmbiguous || amountAmbiguous || nameAmbiguous,\n  chosen_kind: chosenKind,\n  match_count: matches.length,\n  job_id: chosen ? chosen.JobId : null,\n  job_name: chosen ? chosen.CustomerName : null,\n  lead_url: chosen ? chosen.LeadUrl : null,\n  creation_date: chosen ? chosen.CreationDate : null,\n  // keep the full list for the ambiguous-address message\n  _amountInvoice: r._amountInvoice || '',\n  _amountKind: r._amountKind || '',\n  _amountTotal: (r._amountTotal != null ? r._amountTotal : null),\n  _amountBalance: (r._amountBalance != null ? r._amountBalance : null),\n  skipped_note: r._skipped_note || '',\n  all_matches: matches\n}};\n"
+   }
+  },
+  {
+   "id": "02fbdad7-9d3b-536f-b57b-db33ca125419",
+   "name": "Match Result",
+   "type": "n8n-nodes-base.switch",
+   "typeVersion": 3.4,
+   "position": [
+    4680,
+    510
+   ],
+   "parameters": {
+    "rules": {
+     "values": [
+      {
+       "conditions": {
+        "options": {
+         "caseSensitive": true,
+         "leftValue": "",
+         "typeValidation": "loose",
+         "version": 3
+        },
+        "conditions": [
+         {
+          "id": "m_found",
+          "leftValue": "={{ $json.found }}",
+          "rightValue": "={{ true }}",
+          "operator": {
+           "type": "boolean",
+           "operation": "true",
+           "singleValue": true
+          }
+         },
+         {
+          "id": "m_notamb",
+          "leftValue": "={{ $json.ambiguous }}",
+          "rightValue": "={{ false }}",
+          "operator": {
+           "type": "boolean",
+           "operation": "false",
+           "singleValue": true
+          }
+         }
+        ],
+        "combinator": "and"
+       },
+       "renameOutput": true,
+       "outputKey": "FoundOne"
+      },
+      {
+       "conditions": {
+        "options": {
+         "caseSensitive": true,
+         "leftValue": "",
+         "typeValidation": "loose",
+         "version": 3
+        },
+        "conditions": [
+         {
+          "id": "m_amb",
+          "leftValue": "={{ $json.ambiguous }}",
+          "rightValue": "={{ true }}",
+          "operator": {
+           "type": "boolean",
+           "operation": "true",
+           "singleValue": true
+          }
+         }
+        ],
+        "combinator": "and"
+       },
+       "renameOutput": true,
+       "outputKey": "AmbiguousAddress"
+      },
+      {
+       "conditions": {
+        "options": {
+         "caseSensitive": true,
+         "leftValue": "",
+         "typeValidation": "loose",
+         "version": 3
+        },
+        "conditions": [
+         {
+          "id": "m_none",
+          "leftValue": "={{ $json.found }}",
+          "rightValue": "={{ false }}",
+          "operator": {
+           "type": "boolean",
+           "operation": "false",
+           "singleValue": true
+          }
+         }
+        ],
+        "combinator": "and"
+       },
+       "renameOutput": true,
+       "outputKey": "NotFound"
+      }
+     ]
+    },
+    "options": {
+     "fallbackOutput": "extra"
+    }
+   }
+  },
+  {
+   "id": "a8f156e2-e0a7-509e-a1d4-4433f7b8b473",
+   "name": "Find Duplicates",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    4940,
+    170
+   ],
+   "parameters": {
+    "method": "GET",
+    "url": "={{ $('Pilot Config').item.json.console_base_url }}/api/hooks/pilot/find?check_number={{ encodeURIComponent($('Parse Check Data').item.json.check_number || '') }}&amount={{ encodeURIComponent($('Parse Check Data').item.json.amount || '') }}",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "X-Pilot-Secret",
+       "value": "={{ $('Pilot Config').item.json.pilot_hook_secret }}"
+      }
+     ]
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "bb9c7d63-bf78-58c9-b411-658e7a0a469a",
+   "name": "Duplicate?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    5200,
+    170
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "loose",
+      "version": 3
+     },
+     "conditions": [
+      {
+       "id": "e5ee7085",
+       "leftValue": "={{ (($json.items || []).filter(function(i){ return i.review_item_id !== $('Trigger Context').item.json.review_item_id; })).length > 0 }}",
+       "rightValue": "={{ true }}",
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "477c6198-3349-5122-9f61-66d926087cca",
+   "name": "Ask: Duplicate (Match)",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    5460,
+    170
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $('Pilot Config').item.json.console_base_url }}/api/hooks/pilot/question",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "X-Pilot-Secret",
+       "value": "={{ $('Pilot Config').item.json.pilot_hook_secret }}"
+      },
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={\n  \"review_item_id\": \"{{ $('Trigger Context').item.json.review_item_id }}\",\n  \"body\": {{ JSON.stringify('\\u26a0 This check was already uploaded \\u2014 check #' + ($('Parse Check Data').item.json.check_number || '?') + ' for $' + ($('Parse Check Data').item.json.amount || '?') + ' is on an earlier card. See the finished card: ' + ($('Pilot Config').item.json.console_base_url + '/payments/item/' + ((($('Find Duplicates').item.json.items || []).filter(function(i){ return i.review_item_id !== $('Trigger Context').item.json.review_item_id; })[0] || {}).review_item_id || '')) + ' \\u2014 record this one anyway?') }},\n  \"candidates\": {{ JSON.stringify([{label: 'Record anyway: ' + ($('Pick Best Match').item.json.job_name || 'this job'), sublabel: 'It is a different payment', job_id: String($('Pick Best Match').item.json.job_id), moraware_url: $('Pick Best Match').item.json.lead_url || null}, {label: 'Ignore \\u2014 duplicate', sublabel: 'Nothing will be recorded', job_id: null, moraware_url: null}]) }},\n  \"resume_url\": \"{{ $execution.resumeUrl }}\",\n  \"allowed_freeform\": false,\n  \"format_hint\": null,\n  \"push\": true\n}",
+    "options": {}
+   }
+  },
+  {
+   "id": "ccab63f3-f7d4-5ffe-8463-7e79a89ed7b4",
+   "name": "Get Invoice Number",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    5460,
+    340
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $('Pilot Config').item.json.bridge_base_url }}/api/checkbot/invoice-by-job",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={\n  \"jobId\": {{ $('Pick Best Match').item.json.job_id }}\n}",
+    "options": {}
+   }
+  },
+  {
+   "id": "8a9220a3-ca83-59f8-a6af-ca93169ffccf",
+   "name": "Ask: Confirm Match",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    5720,
+    170
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $('Pilot Config').item.json.console_base_url }}/api/hooks/pilot/question",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "X-Pilot-Secret",
+       "value": "={{ $('Pilot Config').item.json.pilot_hook_secret }}"
+      },
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={\n  \"review_item_id\": \"{{ $('Trigger Context').item.json.review_item_id }}\",\n  \"body\": {{ JSON.stringify('Read check #' + ($('Parse Check Data').item.json.check_number || '?') + ' from ' + ($('Parse Check Data').item.json.payer_name || 'unknown') + ' for $' + ($('Parse Check Data').item.json.amount || '?') + '.' + (($('Parse Check Data').item.json.amount_verified && $('Parse Check Data').item.json.check_number_verified) ? '' : ' \\u26a0 Double-check the amount and check number.') + ($('Pick Best Match').item.json.skipped_note ? (' (' + $('Pick Best Match').item.json.skipped_note + ')') : '') + ' Is this the right job?') }},\n  \"candidates\": {{ JSON.stringify([{label: $('Pick Best Match').item.json.job_name || 'Matched job', sublabel: (($('Pick Best Match').item.json._amountInvoice || $('Get Invoice Number').item.json.InvoiceNumber) ? ('Invoice #' + ($('Pick Best Match').item.json._amountInvoice || $('Get Invoice Number').item.json.InvoiceNumber) + ({full: ' \\u2014 pays in full', remainder: ' \\u2014 equals remaining balance', deposit: ' \\u2014 the 75% deposit'}[$('Pick Best Match').item.json._amountKind] || '')) : 'No invoice in Moraware yet'), job_id: String($('Pick Best Match').item.json.job_id), moraware_url: $('Pick Best Match').item.json.lead_url || null}]) }},\n  \"resume_url\": \"{{ $execution.resumeUrl }}\",\n  \"allowed_freeform\": true,\n  \"format_hint\": {{ JSON.stringify('correct job name or 4-digit invoice #') }},\n  \"push\": true\n}",
+    "options": {}
+   }
+  },
+  {
+   "id": "5f886b14-0cc5-5e80-a21e-5f358d7920f2",
+   "name": "Build Address Options",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    4940,
+    340
+   ],
+   "parameters": {
+    "mode": "runOnceForEachItem",
+    "jsCode": "\nconst pick = $('Pick Best Match').item.json;\nconst list = pick.all_matches || [];\nconst strat = pick.strategy || '';\nlet header = \"I couldn't match by name, but found multiple jobs at that address:\";\nif (strat === 'amount-multi') header = 'The amount matches invoices on MORE THAN ONE job for this customer:';\nif (strat === 'name2words') header = \"I couldn't match confidently, but these jobs fit the customer name:\";\nconst lines = list.map((m,i)=>{\n  const unit = m.AddressLine2 ? (' \\u2014 Unit/Apt: '+m.AddressLine2) : (strat === 'address' ? ' \\u2014 (no unit listed)' : '');\n  const inv = m._hitInvoice ? (' \\u2014 Invoice #'+m._hitInvoice+(m._hitKind?(' ('+m._hitKind+')'):'')) : '';\n  return `${i+1}. ${m.CustomerName}${unit}${inv}\\n   ${m.LeadUrl}`;\n}).join('\\n');\nreturn { json: { units_text: lines, count: list.length, header_text: header } };\n"
+   }
+  },
+  {
+   "id": "8833f6bd-3806-5308-bc08-d840c021c9fc",
+   "name": "Ask: Candidates",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    5200,
+    340
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $('Pilot Config').item.json.console_base_url }}/api/hooks/pilot/question",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "X-Pilot-Secret",
+       "value": "={{ $('Pilot Config').item.json.pilot_hook_secret }}"
+      },
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={\n  \"review_item_id\": \"{{ $('Trigger Context').item.json.review_item_id }}\",\n  \"body\": {{ JSON.stringify('Read check #' + ($('Parse Check Data').item.json.check_number || '?') + ' from ' + ($('Parse Check Data').item.json.payer_name || 'unknown') + ' for $' + ($('Parse Check Data').item.json.amount || '?') + '. ' + $('Build Address Options').item.json.header_text) }},\n  \"candidates\": {{ JSON.stringify(($('Pick Best Match').item.json.all_matches || []).slice(0, 4).map(function(m){ return {label: m.CustomerName || ('Job ' + m.JobId), sublabel: [(m.AddressLine2 ? ('Unit ' + m.AddressLine2) : null), (m._hitInvoice ? ('Invoice #' + m._hitInvoice + (m._hitKind ? (' (' + m._hitKind + ')') : '')) : null)].filter(Boolean).join(' \\u00b7 ') || null, job_id: String(m.JobId), moraware_url: m.LeadUrl || null}; })) }},\n  \"resume_url\": \"{{ $execution.resumeUrl }}\",\n  \"allowed_freeform\": true,\n  \"format_hint\": {{ JSON.stringify('correct job name or 4-digit invoice #') }},\n  \"push\": true\n}",
+    "options": {}
+   }
+  },
+  {
+   "id": "9401cfac-12c3-52c8-a1e2-f4ec4843bdf3",
+   "name": "Ask: Not Found",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    4940,
+    510
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $('Pilot Config').item.json.console_base_url }}/api/hooks/pilot/question",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "X-Pilot-Secret",
+       "value": "={{ $('Pilot Config').item.json.pilot_hook_secret }}"
+      },
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={\n  \"review_item_id\": \"{{ $('Trigger Context').item.json.review_item_id }}\",\n  \"body\": {{ JSON.stringify('Read check #' + ($('Parse Check Data').item.json.check_number || '?') + ' from ' + ($('Parse Check Data').item.json.payer_name || 'unknown') + ' \\u2014 $' + ($('Parse Check Data').item.json.amount || '?') + '. \\u26a0 No Moraware job matched name \\u201c' + ($('Parse Check Data').item.json.last_name || '(none)') + '\\u201d or address \\u201c' + [($('Parse Check Data').item.json.street_number || ''), ($('Parse Check Data').item.json.street_name || '')].filter(Boolean).join(' ') + '\\u201d. Type the correct job name or a 4-digit invoice #.') }},\n  \"candidates\": {{ [] }},\n  \"resume_url\": \"{{ $execution.resumeUrl }}\",\n  \"allowed_freeform\": true,\n  \"format_hint\": {{ JSON.stringify('job name or 4-digit invoice #') }},\n  \"push\": true\n}",
+    "options": {}
+   }
+  },
+  {
+   "id": "ad0f94eb-5e42-509e-bed4-a3ef4d206cfd",
+   "name": "Ask: Still Not Found",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    3640,
+    680
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $('Pilot Config').item.json.console_base_url }}/api/hooks/pilot/question",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "X-Pilot-Secret",
+       "value": "={{ $('Pilot Config').item.json.pilot_hook_secret }}"
+      },
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={\n  \"review_item_id\": \"{{ $('Trigger Context').item.json.review_item_id }}\",\n  \"body\": {{ JSON.stringify('Still couldn\\u2019t find a job for \\u201c' + ($('Parse Decision').item.json.text || '?') + '\\u201d. Type the EXACT Moraware job name, a 4-digit invoice #, or paste the Moraware lead URL.') }},\n  \"candidates\": {{ [] }},\n  \"resume_url\": \"{{ $execution.resumeUrl }}\",\n  \"allowed_freeform\": true,\n  \"format_hint\": {{ JSON.stringify('exact job name / invoice # / lead URL') }},\n  \"push\": false\n}",
+    "options": {}
+   }
+  },
+  {
+   "id": "1abc87c8-aae1-56a5-a673-bab90cdd51a6",
+   "name": "Wait: Decision",
+   "type": "n8n-nodes-base.wait",
+   "typeVersion": 1.1,
+   "position": [
+    2080,
+    170
+   ],
+   "parameters": {
+    "resume": "webhook",
+    "httpMethod": "POST",
+    "options": {}
+   },
+   "webhookId": "d44fb7ac-0e7c-5953-af63-eaefb9670aca"
+  },
+  {
+   "id": "f788625c-fc8c-569e-a9e5-836378e4a9cb",
+   "name": "Parse Decision",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    2340,
+    340
+   ],
+   "parameters": {
+    "jsCode": "// Resume payload from the console decision endpoint (decisions.py):\n// {secret, choice: {label, job_id}} or {secret, text}.\nconst b = $json.body || {};\nconst ok = String(b.secret || '') === $('Pilot Config').first().json.pilot_hook_secret;\nconst choice = b.choice || null;\nconst text = (b.text != null) ? String(b.text).trim() : '';\nconst label = choice ? String(choice.label || '') : '';\nconst jobId = (choice && choice.job_id != null && String(choice.job_id).trim() !== '')\n  ? String(choice.job_id).trim() : null;\nconst invoiceText = (!choice && /^#?\\s*\\d{3,6}\\s*$/.test(text))\n  ? text.replace(/[^0-9]/g, '') : null;\nreturn { json: {\n  valid: ok,\n  kind: choice ? 'choice' : 'text',\n  label: label,\n  job_id: jobId,\n  is_ignore: !!choice && !jobId && /^ignore/i.test(label),\n  text: text,\n  invoice_text: invoiceText\n}};\n"
+   }
+  },
+  {
+   "id": "d4d5c613-e97c-5077-b9a0-1033af5fc771",
+   "name": "Decision Valid?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    2600,
+    510
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "loose",
+      "version": 3
+     },
+     "conditions": [
+      {
+       "id": "e1522f62",
+       "leftValue": "={{ $json.valid === true }}",
+       "rightValue": "={{ true }}",
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "c053ae74-8307-5893-9299-2b83ccc75346",
+   "name": "Drop (Bad Resume)",
+   "type": "n8n-nodes-base.noOp",
+   "typeVersion": 1,
+   "position": [
+    2860,
+    680
+   ],
+   "parameters": {}
+  },
+  {
+   "id": "8b1cad17-e81c-54dd-9a2e-cc14983e55e6",
+   "name": "Decision Router",
+   "type": "n8n-nodes-base.switch",
+   "typeVersion": 3.4,
+   "position": [
+    2860,
+    850
+   ],
+   "parameters": {
+    "rules": {
+     "values": [
+      {
+       "conditions": {
+        "options": {
+         "caseSensitive": true,
+         "leftValue": "",
+         "typeValidation": "loose",
+         "version": 3
+        },
+        "conditions": [
+         {
+          "id": "dr1",
+          "leftValue": "={{ $json.is_ignore }}",
+          "rightValue": "={{ true }}",
+          "operator": {
+           "type": "boolean",
+           "operation": "true",
+           "singleValue": true
+          }
+         }
+        ],
+        "combinator": "and"
+       },
+       "renameOutput": true,
+       "outputKey": "IgnoreDuplicate"
+      },
+      {
+       "conditions": {
+        "options": {
+         "caseSensitive": true,
+         "leftValue": "",
+         "typeValidation": "loose",
+         "version": 3
+        },
+        "conditions": [
+         {
+          "id": "dr2",
+          "leftValue": "={{ $json.kind === 'choice' && $json.job_id !== null }}",
+          "rightValue": "={{ true }}",
+          "operator": {
+           "type": "boolean",
+           "operation": "true",
+           "singleValue": true
+          }
+         }
+        ],
+        "combinator": "and"
+       },
+       "renameOutput": true,
+       "outputKey": "ChoseJob"
+      },
+      {
+       "conditions": {
+        "options": {
+         "caseSensitive": true,
+         "leftValue": "",
+         "typeValidation": "loose",
+         "version": 3
+        },
+        "conditions": [
+         {
+          "id": "dr3",
+          "leftValue": "={{ $json.invoice_text || '' }}",
+          "rightValue": "",
+          "operator": {
+           "type": "string",
+           "operation": "notEmpty",
+           "singleValue": true
+          }
+         }
+        ],
+        "combinator": "and"
+       },
+       "renameOutput": true,
+       "outputKey": "InvoiceText"
+      }
+     ]
+    },
+    "options": {
+     "fallbackOutput": "extra"
+    }
+   }
+  },
+  {
+   "id": "508d4a36-fa99-53c8-ae12-76bb90b7d7bc",
+   "name": "Final: Ignored Duplicate",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    3120,
+    680
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $('Pilot Config').item.json.console_base_url }}/api/hooks/pilot/final",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "X-Pilot-Secret",
+       "value": "={{ $('Pilot Config').item.json.pilot_hook_secret }}"
+      },
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={\n  \"review_item_id\": \"{{ $('Trigger Context').item.json.review_item_id }}\",\n  \"body\": {{ JSON.stringify('Marked as duplicate by ' + ($('Trigger Context').item.json.submitted_by_name) + ' \\u2014 nothing was recorded.') }},\n  \"status\": \"duplicate\",\n  \"push\": false\n}",
+    "options": {}
+   }
+  },
+  {
+   "id": "25089710-d6d8-52c5-9889-e49eeb934dba",
+   "name": "Text Job By Invoice",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    3120,
+    850
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $('Pilot Config').item.json.bridge_base_url }}/api/checkbot/job-by-invoice",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={\n  \"invoiceNumber\": {{ JSON.stringify($('Parse Decision').item.json.invoice_text || '') }}\n}",
+    "options": {}
+   }
+  },
+  {
+   "id": "485e16c0-17e7-5ff5-a9f2-a144639553cd",
+   "name": "Text Job Found?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    3380,
+    850
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "loose",
+      "version": 3
+     },
+     "conditions": [
+      {
+       "id": "1495e252",
+       "leftValue": "={{ $json.Found === true }}",
+       "rightValue": "={{ true }}",
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "5976df80-f887-5a31-bef1-0eb146bc2120",
+   "name": "Parse Correction",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    3120,
+    1020
+   ],
+   "parameters": {
+    "mode": "runOnceForEachItem",
+    "jsCode": "\nconst txt = ($('Parse Decision').item.json.text || '').trim();\n// If the manager pasted a Moraware link, pull the jobId\nconst linkMatch = txt.match(/\\/sys\\/job\\/(\\d+)/);\nlet jobIdFromLink = linkMatch ? parseInt(linkMatch[1],10) : null;\n\n// Otherwise treat the text as a corrected name -> split to first/last\nlet first_name=null,last_name=null;\nif(!jobIdFromLink){\n  const parts = txt.replace(/[#\\d]/g,'').trim().split(/\\s+/).filter(Boolean);\n  if(parts.length>=2){ first_name=parts[0]; last_name=parts[parts.length-1]; }\n  else if(parts.length===1){ last_name=parts[0]; }\n}\nreturn { json: {\n  job_id_from_link: jobIdFromLink,\n  has_link: !!jobIdFromLink,\n  first_name, last_name,\n  raw_text: txt\n}};\n"
+   }
+  },
+  {
+   "id": "6e1a015d-0ac8-577b-abc0-79002e337bb1",
+   "name": "Has Moraware Link?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    3380,
+    1020
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "loose",
+      "version": 3
+     },
+     "conditions": [
+      {
+       "id": "c0e09642",
+       "leftValue": "={{ $json.has_link === true }}",
+       "rightValue": "={{ true }}",
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "a068763e-f804-5438-b4e7-9a2e27557c1a",
+   "name": "Search Corrected Job",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    3640,
+    850
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $('Pilot Config').item.json.bridge_base_url }}/api/checkbot/smart-search",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={\n  \"first_name\": \"{{ $json.first_name || '' }}\",\n  \"middle_name\": \"\",\n  \"last_name\": \"{{ $json.last_name || '' }}\",\n  \"entity_type\": \"individual\",\n  \"street_number\": \"\",\n  \"street_name\": \"\",\n  \"zip\": \"\"\n}",
+    "options": {}
+   }
+  },
+  {
+   "id": "54f0935c-24ff-5490-813a-10b975802b87",
+   "name": "Pick Corrected Match",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    3900,
+    1020
+   ],
+   "parameters": {
+    "mode": "runOnceForEachItem",
+    "jsCode": "\nconst r = $input.item.json;\nconst matches = Array.isArray(r.Matches) ? r.Matches : [];\nlet chosen=null;\nif(matches.length){\n  const strong=matches.filter(m=>m.NameMatchStrength==='strong');\n  chosen = strong.length ? strong[0] : matches[0];\n}\nreturn { json: {\n  found: matches.length>0,\n  job_id: chosen?chosen.JobId:null,\n  job_name: chosen?chosen.CustomerName:null,\n  lead_url: chosen?chosen.LeadUrl:null\n}};\n"
+   }
+  },
+  {
+   "id": "7bc0b108-9d75-5528-a844-ed4e80a1d4db",
+   "name": "Corrected Found?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.3,
+   "position": [
+    4160,
+    850
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "loose",
+      "version": 3
+     },
+     "conditions": [
+      {
+       "id": "cf1",
+       "leftValue": "={{ $json.found }}",
+       "rightValue": "={{ true }}",
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "26599cab-10ba-562f-ae06-4072a3506ee6",
+   "name": "Select Job",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    3120,
+    1190
+   ],
+   "parameters": {
+    "jsCode": "// Normalize the chosen job, whichever route it came from.\nconst d = $('Parse Decision').item.json;\nlet job_id = null, job_name = '', lead_url = '';\nif (d.kind === 'choice' && d.job_id) {\n  job_id = d.job_id;\n  job_name = d.label.replace(/^record anyway:\\s*/i, '');\n} else {\n  let srcJob = null;\n  try { const t = $('Text Job By Invoice').item.json;\n        if (t && t.Found === true) srcJob = { id: t.JobId, name: t.CustomerName, url: t.LeadUrl }; } catch (e) {}\n  if (!srcJob) { try { const pc = $('Parse Correction').item.json;\n        if (pc && pc.has_link) srcJob = { id: pc.job_id_from_link, name: 'job #' + pc.job_id_from_link, url: '' }; } catch (e) {} }\n  if (!srcJob) { try { const c = $('Pick Corrected Match').item.json;\n        if (c && c.found) srcJob = { id: c.job_id, name: c.job_name, url: c.lead_url }; } catch (e) {} }\n  if (srcJob) { job_id = String(srcJob.id); job_name = srcJob.name || ''; lead_url = srcJob.url || ''; }\n}\n// A tapped button's decision has no URL — rebuild it from the job id.\nif (!lead_url && job_id && /^\\d+$/.test(job_id)) {\n  lead_url = $('Pilot Config').first().json.moraware_job_base + job_id;\n}\nreturn { json: { job_id: job_id, job_name: job_name, lead_url: lead_url } };\n"
+   }
+  },
+  {
+   "id": "f7eab295-ac1c-5e66-ad9b-55764184528d",
+   "name": "Get Chosen Invoice",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    3380,
+    1190
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $('Pilot Config').item.json.bridge_base_url }}/api/checkbot/invoice-by-job",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={\n  \"jobId\": {{ $('Select Job').item.json.job_id }}\n}",
+    "options": {}
+   }
+  },
+  {
+   "id": "5d107d41-2137-5fa2-bf44-a36151b2ea8d",
+   "name": "Row Context",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    3640,
+    1020
+   ],
+   "parameters": {
+    "jsCode": "// The row shape Classify Payment / the note builders expect.\nconst p = $('Parse Check Data').item.json;\nconst sel = $('Select Job').item.json;\n// Invoice for QB verification: Moraware's answer first, then the invoice the\n// manager typed at submit, then the one OCR'd off the check/caption.\nlet inv = '';\ntry { inv = String($('Get Chosen Invoice').item.json.InvoiceNumber || ''); } catch (e) { inv = ''; }\nif (!inv) inv = String($('Trigger Context').item.json.qb_invoice || '');\nif (!inv) inv = String(p.caption_invoice || '');\nreturn { json: {\n  Amount: p.amount, CheckNumber: p.check_number || '', InvoiceNumber: inv,\n  JobId: sel.job_id, JobName: sel.job_name, MatchMethod: 'console',\n  MorawareURL: sel.lead_url || '', PayerName: p.payer_name || p.display_name || '',\n  PaymentType: p.payment_hint || 'unknown', QBPaymentId: ''\n}};\n"
+   }
+  },
+  {
+   "id": "d200fd76-09b5-5fa1-95e5-5ba47ca8b3c7",
+   "name": "Update: Confirmed",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    3900,
+    1190
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $('Pilot Config').item.json.console_base_url }}/api/hooks/pilot/update",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "X-Pilot-Secret",
+       "value": "={{ $('Pilot Config').item.json.pilot_hook_secret }}"
+      },
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={\n  \"review_item_id\": \"{{ $('Trigger Context').item.json.review_item_id }}\",\n  \"body\": {{ JSON.stringify('Job set: ' + ($('Row Context').item.json.JobName || ('job #' + $('Row Context').item.json.JobId)) + ($('Row Context').item.json.InvoiceNumber ? (' \\u00b7 invoice #' + $('Row Context').item.json.InvoiceNumber) : ' \\u00b7 no invoice in Moraware yet') + '.') }},\n  \"fields\": {{ JSON.stringify(Object.fromEntries(Object.entries({amount: $('Row Context').item.json.Amount, check_number: $('Row Context').item.json.CheckNumber, payer_name: $('Row Context').item.json.PayerName, invoice_number: $('Row Context').item.json.InvoiceNumber, payment_type: ($('Row Context').item.json.PaymentType !== 'unknown' ? $('Row Context').item.json.PaymentType : null), matched_job_id: String($('Row Context').item.json.JobId || ''), matched_job_name: $('Row Context').item.json.JobName, moraware_url: $('Row Context').item.json.MorawareURL}).filter(function(e){return e[1] !== null && e[1] !== undefined && e[1] !== '';}))) }}\n}",
+    "options": {}
+   }
+  },
+  {
+   "id": "7067eea6-7a06-5765-8605-c98dd7cfe5f3",
+   "name": "QB Gate (Confirm)",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    4160,
+    1020
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "loose",
+      "version": 3
+     },
+     "conditions": [
+      {
+       "id": "8d4b9eff",
+       "leftValue": "={{ $('Pilot Config').item.json.qb_verification_enabled === true }}",
+       "rightValue": "={{ true }}",
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "931fa811-c12e-51fa-9089-ef252c708e34",
+   "name": "Get QB Invoice",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    4420,
+    1020
+   ],
+   "parameters": {
+    "url": "={{ $('Pilot Config').item.json.qb_company_url }}/query?query=SELECT * FROM Invoice WHERE DocNumber = '{{ $('Row Context').item.json.InvoiceNumber }}'&minorversion=65",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "quickBooksOAuth2Api",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Accept",
+       "value": "application/json"
+      }
+     ]
+    },
+    "options": {}
+   },
+   "disabled": true
+  },
+  {
+   "id": "1d7e49b9-b8dd-5357-a0c7-2d4ffda5e1a2",
+   "name": "Build Payment Query",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    4680,
+    680
+   ],
+   "parameters": {
+    "mode": "runOnceForEachItem",
+    "jsCode": "// Pull the invoice off the QB response and list its linked PAYMENT txn ids.\nconst resp = ($json && $json.QueryResponse) || {};\nconst inv = (resp.Invoice && resp.Invoice[0]) || null;\nlet ids = [];\nif (inv && Array.isArray(inv.LinkedTxn)) {\n  ids = inv.LinkedTxn\n    .filter(t => t && t.TxnType === 'Payment' && t.TxnId)\n    .map(t => String(t.TxnId));\n}\n// Always-valid WHERE clause (returns nothing when there are no linked payments).\nconst idClause = ids.length\n  ? ('Id IN (' + ids.map(i => \"'\" + i + \"'\").join(',') + ')')\n  : \"Id = '0'\";\nreturn { json: { idClause: idClause, linkedPaymentIds: ids } };"
+   }
+  },
+  {
+   "id": "5a34b672-f788-5c26-8eaa-26dc17ee3dbd",
+   "name": "Get QB Payments",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    4940,
+    680
+   ],
+   "parameters": {
+    "url": "={{ $('Pilot Config').item.json.qb_company_url }}/query?query=SELECT * FROM Payment WHERE {{ $json.idClause }}&minorversion=65",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "quickBooksOAuth2Api",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Accept",
+       "value": "application/json"
+      }
+     ]
+    },
+    "options": {}
+   },
+   "disabled": true
+  },
+  {
+   "id": "dbc82de8-7415-57af-aff2-1e9f151edf9b",
+   "name": "Classify Payment",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    5200,
+    510
+   ],
+   "parameters": {
+    "mode": "runOnceForEachItem",
+    "jsCode": "// ===== QB payment classifier (date-aware before-balance) =====\nconst num = v => { const n = parseFloat(String(v ?? '').replace(/[^0-9.\\-]/g,'')); return isNaN(n)?null:n; };\nconst EPS = 0.005;\nconst today = new Date().toISOString().slice(0,10);\n\nfunction money(n){\n  if (n === null || n === undefined || n === '' || isNaN(Number(n))) return '$?';\n  let v = Math.round(Number(n) * 100) / 100;\n  let p = v.toFixed(2).split('.');\n  p[0] = p[0].replace(/\\B(?=(\\d{3})+(?!\\d))/g, ',');\n  return '$' + p[0] + '.' + p[1];\n}\nfunction canon(t){\n  t = (t||'').toString().trim().toLowerCase();\n  if (t==='deposit') return 'deposit';\n  if (t==='remainder') return 'remainder';\n  if (t==='pif' || t==='paid in full') return 'PIF';\n  if (t==='progress') return 'progress';\n  return 'unknown';\n}\nfunction label(c){\n  if (c==='deposit') return 'deposit';\n  if (c==='remainder') return 'remainder';\n  if (c==='PIF') return 'paid in full';\n  if (c==='progress') return 'progress payment';\n  return 'payment type pending verification';\n}\n\nconst row = $('Row Context').item.json || {};\nconst checkNumber = String(row.CheckNumber ?? '').trim();\nconst A = num(row.Amount);\nconst captionHint = (row.PaymentType || '').toString().trim().toLowerCase();\nconst rawName = (row.JobName || row.PayerName || 'Unknown payer').toString().trim();\nconst payerName = rawName.replace(/\\s*\\([^)]*\\)\\s*$/, '').trim() || rawName;\nconst MORA_BASE='https://granite-marble-tops.moraware.net/sys/job/';\nconst mmRaw=String(row.MatchMethod||'');\nlet candJobId=null, candJobName='', candUrl='', mmClean=mmRaw;\nif(mmRaw.indexOf('pending-fallback~~')===0){ const pp=mmRaw.split('~~'); candJobId=pp[1]?Number(pp[1]):null; candJobName=pp[2]||''; candUrl=pp[3]||''; mmClean='fallback:'+(pp[4]||''); }\nconst rowJobIdN=(row.JobId!==undefined&&row.JobId!==null&&String(row.JobId).trim()!=='')?Number(row.JobId):null;\nconst effJobId=(rowJobIdN!==null&&!isNaN(rowJobIdN))?rowJobIdN:candJobId;\nconst jobName=(String(row.JobName||'').trim())||candJobName||payerName;\nconst effUrl=(String(row.MorawareURL||'').trim())||candUrl||(effJobId?(MORA_BASE+effJobId):'');\nconst invoiceNum = (row.InvoiceNumber || '').toString().trim() || 'pending';\n\n// QB invoice figures\nfunction fullContract(invObj){\n  if(!invObj||!Array.isArray(invObj.Line)) return null;\n  let s=0, frac=false;\n  for(const ln of invObj.Line){\n    const dt=String((ln&&ln.DetailType)||'');\n    if(dt==='DiscountLineDetail'&&ln.Amount!=null){ s-=Number(ln.Amount)||0; continue; }\n    const dd=ln&&ln.SalesItemLineDetail;\n    if(dt!=='SalesItemLineDetail'||!dd) continue;\n    const qty=(dd.Qty!=null)?Number(dd.Qty):null;\n    const unit=(dd.UnitPrice!=null)?Number(dd.UnitPrice):null;\n    const a=(ln.Amount!=null)?Number(ln.Amount):0;\n    const nm=String(((dd.ItemRef&&dd.ItemRef.name)||'')+' '+(ln.Description||''));\n    const feeName=/credit\\s*card|credit\\s*c\\s*%|cc\\s*fee|card\\s*fee|surcharge|processing\\s*fee|convenience\\s*fee/i.test(nm);\n    const feeQty=(qty!=null&&qty>0&&qty<0.2);\n    if(feeName||feeQty) continue; // payment-method fees are not part of the contract\n    if(qty!=null&&qty>0&&qty<1&&unit!=null&&unit>0){ s+=unit; frac=true; }\n    else s+=a;\n  }\n  if(!frac) return null;\n  return Math.round(s*100)/100;\n}\nlet inv = null;\ntry { inv = $('Get QB Invoice').item.json.QueryResponse.Invoice[0] || null; } catch(e) { inv = null; }\nconst qbReachable = inv !== null;\nconst T = inv ? num(inv.TotalAmt) : null;\nconst B = inv ? num(inv.Balance) : null;\nconst F0 = fullContract(inv);\nconst F = (F0 != null && T != null) ? Math.max(F0, T) : ((F0 != null) ? F0 : T); // full contract; equals TotalAmt when no fractional-qty lines\nconst fracInv = (F != null && T != null && F > T + EPS);\n\n\n// QB payments linked to the invoice\nlet pays = [];\ntry {\n  const arr = $json.QueryResponse.Payment;\n  if (Array.isArray(arr)) pays = arr.map(p => ({\n    id: String(p.Id ?? '').trim(),\n    refNum: String(p.PaymentRefNum ?? '').trim(),\n    amt: num(p.TotalAmt),\n    date: String(p.TxnDate ?? '').slice(0,10)\n  }));\n} catch(e) { pays = []; }\n\nconst qbPid = String(row.QBPaymentId ?? '').trim();\nconst matched = (qbPid ? pays.find(p => p.id && p.id === qbPid) : null) || pays.find(p => p.refNum && p.refNum === checkNumber);\nconst inQB = !!matched;\n// Prior payments = what QuickBooks already shows paid on this invoice, anchored to the\n// invoice Balance (authoritative, date-independent). If this check is itself already\n// recorded in QB, its amount is part of that figure, so subtract it for the BEFORE state.\nlet priorPaid = null;\nlet beforeBalance = null;\nif (T !== null && B !== null) {\n  const paidSoFar = T - B;\n  priorPaid = inQB ? (paidSoFar - (A || 0)) : paidSoFar;\n  if (priorPaid < EPS) priorPaid = 0;\n  beforeBalance = T - priorPaid;\n} else if (T !== null) {\n  let sum = 0;\n  for (const p of pays) { if (p.refNum && p.refNum === checkNumber) continue; sum += (p.amt || 0); }\n  priorPaid = sum;\n  beforeBalance = T - priorPaid;\n}\n\n// ----- classify -----\nconst flags = [];\nlet qbType = null;\nif (T === null || A === null || beforeBalance === null) {\n  flags.push('QB invoice unavailable - could not auto-classify');\n} else {\n  const cumAfter = (priorPaid || 0) + A;               // collected toward the contract incl. this check\n  const contractLeft = (F !== null) ? (F - cumAfter) : null; // measured vs the FULL contract (Rate x 1), not the qty-discounted invoice total\n  if (contractLeft !== null && contractLeft <= EPS) {\n    qbType = priorPaid > EPS ? 'remainder' : 'PIF';\n  } else {\n    qbType = priorPaid > EPS ? 'progress' : 'deposit';\n  }\n  if (beforeBalance <= EPS && !fracInv) flags.push('QB shows nothing owed before this check - verify invoice total (possible scope increase)');\n  if ((A - beforeBalance) > EPS && !(fracInv && cumAfter <= F + EPS)) flags.push('check amount is more than the invoice balance - possible scope increase, verify');\n}\n\n// ----- QB balance block: anchored to what QuickBooks ACTUALLY shows right now -----\nconst owedNow = (B !== null) ? B : beforeBalance; // current amount QuickBooks shows owing\nlet qbBalanceBlock;\nif (!qbReachable || owedNow === null) {\n  qbBalanceBlock = \"\\u26a0 Couldn't reach QuickBooks to check the balance\";\n} else if (inQB) {\n  qbBalanceBlock = (owedNow <= EPS)\n    ? '\\u2713 Already recorded in QuickBooks \\u00b7 invoice paid in full'\n    : '\\u2713 Already recorded in QuickBooks \\u00b7 ' + money(owedNow) + ' still owing';\n} else {\n  const after = Math.max(0, owedNow - (A || 0));\n  const head = '\\u23f3 Not yet recorded in QuickBooks (it still shows ' + money(owedNow) + ' owing)';\n  qbBalanceBlock = (after <= EPS)\n    ? head + '\\nEntering this check will pay the invoice in full'\n    : head + '\\nAfter you enter it, ' + money(after) + ' will remain';\n}\nif (fracInv && priorPaid !== null && A !== null) {\n  const collectedNow = (priorPaid || 0) + A;\n  qbBalanceBlock += '\\n\\u2139 75%-style invoice \\u00b7 full contract ' + money(F) + ' \\u00b7 collected ' + money(collectedNow);\n}\n\n\n// ----- QuickBooks is the truth; the caption hint only fills gaps -----\nconst hint = (captionHint && captionHint !== 'unknown') ? canon(captionHint) : null;\nlet paymentType;\nif (qbType) {\n  paymentType = canon(qbType);\n  if (hint && hint !== 'unknown' && hint !== qbType) flags.push(\"the check/caption said '\" + hint + \"' but QuickBooks shows a '\" + qbType + \"' - using QuickBooks\");\n} else if (hint && hint !== 'unknown') {\n  paymentType = hint;\n} else {\n  paymentType = 'unknown';\n}\n\n// ----- human-readable context for the note + confirmation -----\nconst remainingAfterNum = (beforeBalance !== null && A !== null) ? (beforeBalance - A) : null;\nconst priorPaidStr = (priorPaid !== null && priorPaid > EPS) ? money(priorPaid) : null;\nconst remainingAfterStr = (remainingAfterNum !== null) ? money(Math.max(0, remainingAfterNum)) : null;\nlet paymentContext = '';\nif (priorPaidStr) {\n  paymentContext = (remainingAfterNum !== null && remainingAfterNum <= EPS)\n    ? (priorPaidStr + ' previously paid \\u00b7 pays the invoice in full')\n    : (remainingAfterStr ? (priorPaidStr + ' previously paid \\u00b7 ' + remainingAfterStr + ' remaining') : (priorPaidStr + ' previously paid'));\n}\n\nreturn { json: {\n  paymentType: paymentType,\n  typeLabel: label(paymentType),\n  payerName: payerName,\n  jobName: jobName,\n  leadUrl: effUrl,\n  matchMethodClean: mmClean,\n  invoiceNum: invoiceNum,\n  amountStr: money(A),\n  amountNum: A,\n  checkNumber: checkNumber || '?',\n  jobId: effJobId,\n  source: qbType ? 'quickbooks' : 'caption',\n  inQB: inQB,\n  qbReachable: qbReachable,\n  qbType: qbType || null,\n  invoiceTotal: T,\n  invoiceBalance: B,\n  beforeBalance: beforeBalance,\n  priorPaid: priorPaid,\n  priorPaidStr: priorPaidStr,\n  remainingAfter: remainingAfterNum,\n  paymentContext: paymentContext,\n  qbBalanceBlock: qbBalanceBlock,\n  classifierFlags: flags.join('; ')\n}};"
+   }
+  },
+  {
+   "id": "f6e0e4e4-801c-5b3e-874d-af7f0451259a",
+   "name": "Update: Classified",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    5460,
+    510
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $('Pilot Config').item.json.console_base_url }}/api/hooks/pilot/update",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "X-Pilot-Secret",
+       "value": "={{ $('Pilot Config').item.json.pilot_hook_secret }}"
+      },
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={\n  \"review_item_id\": \"{{ $('Trigger Context').item.json.review_item_id }}\",\n  \"body\": {{ JSON.stringify('Payment type: ' + $('Classify Payment').item.json.typeLabel + ($('Classify Payment').item.json.paymentContext ? (' \\u2014 ' + $('Classify Payment').item.json.paymentContext) : '') + '. ' + String($('Classify Payment').item.json.qbBalanceBlock || '').split('\\n')[0]) }},\n  \"fields\": {{ JSON.stringify(Object.fromEntries(Object.entries({payment_type: ($('Classify Payment').item.json.paymentType !== 'unknown' ? $('Classify Payment').item.json.paymentType : null)}).filter(function(e){return e[1] !== null && e[1] !== undefined && e[1] !== '';}))) }}\n}",
+    "options": {}
+   }
+  },
+  {
+   "id": "4f3be65e-ebe5-562e-bf4a-50b02d050e22",
+   "name": "Build Payment Note",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    5720,
+    340
+   ],
+   "parameters": {
+    "mode": "runOnceForEachItem",
+    "jsCode": "const c = $('Classify Payment').item.json;\nlet notes = `Payment received \\u2014 ${c.payerName} paid ${c.amountStr} (${c.typeLabel}) \\u2014 check #${c.checkNumber}.`;\nif (c.paymentContext) notes += ` ${c.paymentContext}.`;\nnotes += ` Logged automatically by check-bot.`;\nreturn { json: { jobId: c.jobId, notes: notes } };"
+   }
+  },
+  {
+   "id": "2973ee3f-383c-57c5-8280-e72f283889c2",
+   "name": "Simple Note",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    4420,
+    1190
+   ],
+   "parameters": {
+    "jsCode": "// No-QuickBooks variant of Build Payment Note (same output shape).\nconst r = $('Row Context').item.json;\nfunction fmt(v){const n=parseFloat(String(v==null?'':v).replace(/[^0-9.\\-]/g,''));if(isNaN(n))return '?';let q=(Math.round(n*100)/100).toFixed(2).split('.');q[0]=q[0].replace(/\\B(?=(\\d{3})+(?!\\d))/g,',');return q[0]+'.'+q[1];}\nconst amtStr = '$' + fmt(r.Amount);\nconst typeLabel = r.PaymentType === 'PIF' ? 'paid in full' : (r.PaymentType === 'unknown' ? 'payment' : r.PaymentType);\nconst notes = 'Payment received \\u2014 ' + (r.PayerName || 'customer') + ' paid ' + amtStr + ' (' + typeLabel + ')' + (r.CheckNumber ? (' \\u2014 check #' + r.CheckNumber) : '') + '. Logged automatically by check-bot (console pilot).';\nreturn { json: { jobId: r.JobId, notes: notes } };\n"
+   }
+  },
+  {
+   "id": "31766dd6-9dd6-52e1-9386-90c23e949dc7",
+   "name": "Create Moraware Activity",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    4680,
+    850
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $('Pilot Config').item.json.bridge_base_url }}/api/checkbot/create-activity",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={\n  \"jobId\": {{ $json.jobId }},\n  \"notes\": {{ JSON.stringify($json.notes) }},\n  \"activityTypeId\": 17\n}",
+    "options": {}
+   }
+  },
+  {
+   "id": "d8e7eb41-ea59-51a0-8a20-33c94a3f1ef2",
+   "name": "Build Final Message",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    4940,
+    850
+   ],
+   "parameters": {
+    "jsCode": "// The resolution line: becomes the final-hook body AND the push title.\nconst r = $('Row Context').item.json;\nconst mor = $json;\nconst morOk = !!(mor && (mor.ActivityId || mor.Success === true || mor.Success === 'true'));\nlet c = null; try { c = $('Classify Payment').item.json; } catch (e) { c = null; }\nfunction fmt(v){const n=parseFloat(String(v==null?'':v).replace(/[^0-9.\\-]/g,''));if(isNaN(n))return '?';let q=(Math.round(n*100)/100).toFixed(2).split('.');q[0]=q[0].replace(/\\B(?=(\\d{3})+(?!\\d))/g,',');return q[0]+'.'+q[1];}\nconst amtStr = c ? c.amountStr : ('$' + fmt(r.Amount));\nconst typeLabel = c ? c.typeLabel : (r.PaymentType === 'PIF' ? 'paid in full' : (r.PaymentType === 'unknown' ? 'payment' : r.PaymentType));\nconst inv = (c && c.invoiceNum && c.invoiceNum !== 'pending') ? c.invoiceNum : (r.InvoiceNumber || '');\nconst L = [];\nL.push('\\u2713 ' + amtStr + ' \\u2192 ' + (r.JobName || 'job') + ' \\u2014 ' + typeLabel);\nif (r.CheckNumber) L.push('Check #' + r.CheckNumber + (inv ? (' \\u00b7 Invoice #' + inv) : ' \\u00b7 Invoice pending'));\nif (c && c.qbBalanceBlock) L.push(String(c.qbBalanceBlock));\nL.push(morOk ? 'Note posted to the Moraware job file.' : '\\u26a0 Moraware note FAILED \\u2014 add it to the job manually.');\nif (c && c.classifierFlags) L.push('\\u26a0 ' + c.classifierFlags);\nif (r.MorawareURL) L.push(r.MorawareURL);\nreturn { json: { message: L.join('\\n') } };\n"
+   }
+  },
+  {
+   "id": "badf2f8e-752b-5402-bab7-e9d7f9114733",
+   "name": "Final: Confirmed",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    5200,
+    680
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $('Pilot Config').item.json.console_base_url }}/api/hooks/pilot/final",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "X-Pilot-Secret",
+       "value": "={{ $('Pilot Config').item.json.pilot_hook_secret }}"
+      },
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={\n  \"review_item_id\": \"{{ $('Trigger Context').item.json.review_item_id }}\",\n  \"body\": {{ JSON.stringify($('Build Final Message').item.json.message) }},\n  \"status\": \"confirmed\",\n  \"push\": false\n}",
+    "options": {}
+   }
+  },
+  {
+   "id": "fdf1007d-cf33-5c18-bdcb-cef56366912f",
+   "name": "Drive Gate",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    4940,
+    1020
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "loose",
+      "version": 3
+     },
+     "conditions": [
+      {
+       "id": "4c029dff",
+       "leftValue": "={{ $('Pilot Config').item.json.drive_archive_enabled === true }}",
+       "rightValue": "={{ true }}",
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "2536b020-e74f-5ccf-84ce-190746e68fe3",
+   "name": "Fetch Original Photo",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    5200,
+    850
+   ],
+   "parameters": {
+    "method": "GET",
+    "url": "={{ $('Pilot Config').item.json.console_base_url }}/api/hooks/pilot/photo/{{ $('Trigger Context').item.json.review_item_id }}",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "X-Pilot-Secret",
+       "value": "={{ $('Pilot Config').item.json.pilot_hook_secret }}"
+      }
+     ]
+    },
+    "options": {
+     "response": {
+      "response": {
+       "responseFormat": "file"
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "76208308-a57a-55f2-b8ab-8c32da7ac23a",
+   "name": "Prepare Photo File",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    5460,
+    680
+   ],
+   "parameters": {
+    "mode": "runOnceForEachItem",
+    "jsCode": "// Filename only — the binary rides from Fetch Original Photo (full quality).\nlet jobNameR = '';\ntry { jobNameR = $('Select Job').item.json.job_name || ''; } catch (e) {}\nif (!jobNameR) { try { jobNameR = $('AC Build Row').item.json.JobName || ''; } catch (e) {} }\nif (!jobNameR) { try { jobNameR = $('Cash Build Row').item.json.JobName || ''; } catch (e) {} }\nconst parse = $('Parse Check Data').item.json;\nfunction safe(s){ return (s || '').toString().replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60); }\nconst src = $('Fetch Original Photo').item.binary.data;\nconst ext = ((src.mimeType || '').includes('png')) ? '.png' : '.jpg';\nconst fname = (safe(jobNameR) || 'unknown-job') + '_' + (safe(parse.check_number) || 'nochk') + '_' + (safe(String(parse.amount)) || 'noamt') + ext;\nreturn { json: { filename: fname, year: String(new Date().getFullYear()) } };\n"
+   }
+  },
+  {
+   "id": "1bf35db9-51b9-52a0-9e32-2f9d2b6b4716",
+   "name": "Find Year Folder",
+   "type": "n8n-nodes-base.googleDrive",
+   "typeVersion": 3,
+   "position": [
+    5720,
+    510
+   ],
+   "parameters": {
+    "resource": "fileFolder",
+    "returnAll": true,
+    "filter": {
+     "folderId": {
+      "__rl": true,
+      "value": "={{ $('Pilot Config').item.json.drive_folder_id }}",
+      "mode": "id"
+     },
+     "whatToSearch": "folders"
+    },
+    "options": {}
+   },
+   "alwaysOutputData": true,
+   "disabled": true
+  },
+  {
+   "id": "c76a238c-43ba-5ee2-a599-fc599f0e6ffe",
+   "name": "Year Folder Exists?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.3,
+   "position": [
+    5980,
+    170
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "loose",
+      "version": 3
+     },
+     "conditions": [
+      {
+       "id": "yf1",
+       "leftValue": "={{ $json.id || '' }}",
+       "rightValue": "",
+       "operator": {
+        "type": "string",
+        "operation": "notEmpty",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "9214ff25-cdc6-515e-a97d-063c022fae47",
+   "name": "Create Year Folder",
+   "type": "n8n-nodes-base.googleDrive",
+   "typeVersion": 3,
+   "position": [
+    6240,
+    170
+   ],
+   "parameters": {
+    "resource": "folder",
+    "name": "={{ $('Prepare Photo File').item.json.year }}",
+    "driveId": {
+     "__rl": true,
+     "value": "My Drive",
+     "mode": "list"
+    },
+    "folderId": {
+     "__rl": true,
+     "value": "={{ $('Pilot Config').item.json.drive_folder_id }}",
+     "mode": "id"
+    },
+    "options": {}
+   },
+   "disabled": true
+  },
+  {
+   "id": "45e13488-9f28-5557-b98a-1a581687e6f6",
+   "name": "Attach Photo_00",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    6240,
+    340
+   ],
+   "parameters": {
+    "mode": "runOnceForEachItem",
+    "jsCode": "// Re-attach the ORIGINAL photo binary (folder-lookup steps dropped it).\nconst src = $('Fetch Original Photo').item.binary.data;\nconst fname = $('Prepare Photo File').item.json.filename;\nreturn { json: { ...$json }, binary: { data: Object.assign({}, src, { fileName: fname }) } };\n"
+   }
+  },
+  {
+   "id": "561a25db-836a-5e69-8cd7-af1e381890dc",
+   "name": "Attach Photo_01",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    6500,
+    170
+   ],
+   "parameters": {
+    "mode": "runOnceForEachItem",
+    "jsCode": "// Re-attach the ORIGINAL photo binary (folder-lookup steps dropped it).\nconst src = $('Fetch Original Photo').item.binary.data;\nconst fname = $('Prepare Photo File').item.json.filename;\nreturn { json: { ...$json }, binary: { data: Object.assign({}, src, { fileName: fname }) } };\n"
+   }
+  },
+  {
+   "id": "514c8245-f673-53d4-8e07-cdb19dcdadcd",
+   "name": "Upload Check Photo",
+   "type": "n8n-nodes-base.googleDrive",
+   "typeVersion": 3,
+   "position": [
+    6500,
+    340
+   ],
+   "parameters": {
+    "name": "={{ $('Prepare Photo File').item.json.filename }}",
+    "driveId": {
+     "__rl": true,
+     "value": "My Drive",
+     "mode": "list"
+    },
+    "folderId": {
+     "__rl": true,
+     "value": "={{ $('Year Folder Exists?').item.json.id || $json.id }}",
+     "mode": "id"
+    },
+    "options": {}
+   },
+   "disabled": true
+  }
+ ],
+ "connections": {
+  "Console Trigger": {
+   "main": [
+    [
+     {
+      "node": "Pilot Config",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Pilot Config": {
+   "main": [
+    [
+     {
+      "node": "Verify Secret",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Verify Secret": {
+   "main": [
+    [
+     {
+      "node": "Trigger Context",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Drop (Bad Secret)",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Trigger Context": {
+   "main": [
+    [
+     {
+      "node": "Read Check with Claude",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Read Check with Claude": {
+   "main": [
+    [
+     {
+      "node": "Parse Check Data",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Parse Check Data": {
+   "main": [
+    [
+     {
+      "node": "Readable?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Readable?": {
+   "main": [
+    [
+     {
+      "node": "Update: Read Result",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Ask: Unreadable",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Update: Read Result": {
+   "main": [
+    [
+     {
+      "node": "Is Cash Photo?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Is Cash Photo?": {
+   "main": [
+    [
+     {
+      "node": "Cash Data",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Photo Has Invoice?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Cash Data": {
+   "main": [
+    [
+     {
+      "node": "Cash Has Data?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Cash Has Data?": {
+   "main": [
+    [
+     {
+      "node": "Cash Job By Invoice",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Ask: Cash Info",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Ask: Cash Info": {
+   "main": [
+    [
+     {
+      "node": "Wait: Cash",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Ask: Cash Invoice Not Found": {
+   "main": [
+    [
+     {
+      "node": "Wait: Cash",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Wait: Cash": {
+   "main": [
+    [
+     {
+      "node": "Parse Cash Info",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Parse Cash Info": {
+   "main": [
+    [
+     {
+      "node": "Cash Data",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Cash Job By Invoice": {
+   "main": [
+    [
+     {
+      "node": "Cash Job Found?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Cash Job Found?": {
+   "main": [
+    [
+     {
+      "node": "Cash Find Duplicates",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Ask: Cash Invoice Not Found",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Cash Find Duplicates": {
+   "main": [
+    [
+     {
+      "node": "Cash Duplicate?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Cash Duplicate?": {
+   "main": [
+    [
+     {
+      "node": "Final: Cash Already Recorded",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Cash Build Row",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Cash Build Row": {
+   "main": [
+    [
+     {
+      "node": "Update: Cash Details",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Update: Cash Details": {
+   "main": [
+    [
+     {
+      "node": "Cash Post Note",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Cash Post Note": {
+   "main": [
+    [
+     {
+      "node": "Final: Cash Recorded",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Photo Has Invoice?": {
+   "main": [
+    [
+     {
+      "node": "Photo Job By Invoice",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Smart Search",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Photo Job By Invoice": {
+   "main": [
+    [
+     {
+      "node": "Photo Job Found?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Photo Job Found?": {
+   "main": [
+    [
+     {
+      "node": "AC Find Duplicates",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Smart Search",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "AC Find Duplicates": {
+   "main": [
+    [
+     {
+      "node": "Fast Path Duplicate?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Fast Path Duplicate?": {
+   "main": [
+    [
+     {
+      "node": "Ask: Duplicate (Fast Path)",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "QB Gate (Fast Path)",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Ask: Duplicate (Fast Path)": {
+   "main": [
+    [
+     {
+      "node": "Wait: Decision",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "QB Gate (Fast Path)": {
+   "main": [
+    [
+     {
+      "node": "AC Get QB Invoice",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "AC Build Row",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "AC Get QB Invoice": {
+   "main": [
+    [
+     {
+      "node": "AC Build Payment Query",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "AC Build Payment Query": {
+   "main": [
+    [
+     {
+      "node": "AC Get QB Payments",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "AC Get QB Payments": {
+   "main": [
+    [
+     {
+      "node": "AC Build Row",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "AC Build Row": {
+   "main": [
+    [
+     {
+      "node": "Update: Fast Path Details",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Update: Fast Path Details": {
+   "main": [
+    [
+     {
+      "node": "AC Post Note",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "AC Post Note": {
+   "main": [
+    [
+     {
+      "node": "Final: Fast Path Recorded",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Smart Search": {
+   "main": [
+    [
+     {
+      "node": "AV Seed",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "AV Seed": {
+   "main": [
+    [
+     {
+      "node": "AV Fallback Find",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "AV Fallback Find": {
+   "main": [
+    [
+     {
+      "node": "AV Merge Fanout",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "AV Merge Fanout": {
+   "main": [
+    [
+     {
+      "node": "QB Gate (AV)",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "QB Gate (AV)": {
+   "main": [
+    [
+     {
+      "node": "AV Get Job Invoices",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "AV Collector",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "AV Get Job Invoices": {
+   "main": [
+    [
+     {
+      "node": "AV Build QB Query",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "AV Build QB Query": {
+   "main": [
+    [
+     {
+      "node": "AV Get QB Amounts",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "AV Get QB Amounts": {
+   "main": [
+    [
+     {
+      "node": "AV Collector",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "AV Collector": {
+   "main": [
+    [
+     {
+      "node": "QB Gate (Vet)",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "QB Gate (Vet)": {
+   "main": [
+    [
+     {
+      "node": "Vet Prep",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Pick Best Match",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Vet Prep": {
+   "main": [
+    [
+     {
+      "node": "Vet Has Candidate?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Vet Has Candidate?": {
+   "main": [
+    [
+     {
+      "node": "Vet Get Invoice",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Pick Best Match",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Vet Get Invoice": {
+   "main": [
+    [
+     {
+      "node": "Vet QB Invoice",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Vet QB Invoice": {
+   "main": [
+    [
+     {
+      "node": "Vet Decide",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Vet Decide": {
+   "main": [
+    [
+     {
+      "node": "Vet Skip?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Vet Skip?": {
+   "main": [
+    [
+     {
+      "node": "Rescue Find Jobs",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Pick Best Match",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Rescue Find Jobs": {
+   "main": [
+    [
+     {
+      "node": "Rescue Prep",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Rescue Prep": {
+   "main": [
+    [
+     {
+      "node": "Rescue Has Candidate?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Rescue Has Candidate?": {
+   "main": [
+    [
+     {
+      "node": "Rescue Get Invoice",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Rescue None",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Rescue Get Invoice": {
+   "main": [
+    [
+     {
+      "node": "Rescue QB Invoice",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Rescue QB Invoice": {
+   "main": [
+    [
+     {
+      "node": "Rescue Decide",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Rescue Decide": {
+   "main": [
+    [
+     {
+      "node": "Pick Best Match",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Rescue None": {
+   "main": [
+    [
+     {
+      "node": "Pick Best Match",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Pick Best Match": {
+   "main": [
+    [
+     {
+      "node": "Match Result",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Match Result": {
+   "main": [
+    [
+     {
+      "node": "Find Duplicates",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Build Address Options",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Ask: Not Found",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Ask: Not Found",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Find Duplicates": {
+   "main": [
+    [
+     {
+      "node": "Duplicate?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Duplicate?": {
+   "main": [
+    [
+     {
+      "node": "Ask: Duplicate (Match)",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Get Invoice Number",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Ask: Duplicate (Match)": {
+   "main": [
+    [
+     {
+      "node": "Wait: Decision",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Get Invoice Number": {
+   "main": [
+    [
+     {
+      "node": "Ask: Confirm Match",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Ask: Confirm Match": {
+   "main": [
+    [
+     {
+      "node": "Wait: Decision",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Build Address Options": {
+   "main": [
+    [
+     {
+      "node": "Ask: Candidates",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Ask: Candidates": {
+   "main": [
+    [
+     {
+      "node": "Wait: Decision",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Ask: Not Found": {
+   "main": [
+    [
+     {
+      "node": "Wait: Decision",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Ask: Unreadable": {
+   "main": [
+    [
+     {
+      "node": "Wait: Decision",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Ask: Still Not Found": {
+   "main": [
+    [
+     {
+      "node": "Wait: Decision",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Wait: Decision": {
+   "main": [
+    [
+     {
+      "node": "Parse Decision",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Parse Decision": {
+   "main": [
+    [
+     {
+      "node": "Decision Valid?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Decision Valid?": {
+   "main": [
+    [
+     {
+      "node": "Decision Router",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Drop (Bad Resume)",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Decision Router": {
+   "main": [
+    [
+     {
+      "node": "Final: Ignored Duplicate",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Select Job",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Text Job By Invoice",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Parse Correction",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Text Job By Invoice": {
+   "main": [
+    [
+     {
+      "node": "Text Job Found?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Text Job Found?": {
+   "main": [
+    [
+     {
+      "node": "Select Job",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Ask: Still Not Found",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Parse Correction": {
+   "main": [
+    [
+     {
+      "node": "Has Moraware Link?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Has Moraware Link?": {
+   "main": [
+    [
+     {
+      "node": "Select Job",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Search Corrected Job",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Search Corrected Job": {
+   "main": [
+    [
+     {
+      "node": "Pick Corrected Match",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Pick Corrected Match": {
+   "main": [
+    [
+     {
+      "node": "Corrected Found?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Corrected Found?": {
+   "main": [
+    [
+     {
+      "node": "Select Job",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Ask: Still Not Found",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Select Job": {
+   "main": [
+    [
+     {
+      "node": "Get Chosen Invoice",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Get Chosen Invoice": {
+   "main": [
+    [
+     {
+      "node": "Row Context",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Row Context": {
+   "main": [
+    [
+     {
+      "node": "Update: Confirmed",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Update: Confirmed": {
+   "main": [
+    [
+     {
+      "node": "QB Gate (Confirm)",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "QB Gate (Confirm)": {
+   "main": [
+    [
+     {
+      "node": "Get QB Invoice",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Simple Note",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Get QB Invoice": {
+   "main": [
+    [
+     {
+      "node": "Build Payment Query",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Build Payment Query": {
+   "main": [
+    [
+     {
+      "node": "Get QB Payments",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Get QB Payments": {
+   "main": [
+    [
+     {
+      "node": "Classify Payment",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Classify Payment": {
+   "main": [
+    [
+     {
+      "node": "Update: Classified",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Update: Classified": {
+   "main": [
+    [
+     {
+      "node": "Build Payment Note",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Build Payment Note": {
+   "main": [
+    [
+     {
+      "node": "Create Moraware Activity",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Simple Note": {
+   "main": [
+    [
+     {
+      "node": "Create Moraware Activity",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Create Moraware Activity": {
+   "main": [
+    [
+     {
+      "node": "Build Final Message",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Build Final Message": {
+   "main": [
+    [
+     {
+      "node": "Final: Confirmed",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Final: Confirmed": {
+   "main": [
+    [
+     {
+      "node": "Drive Gate",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Final: Fast Path Recorded": {
+   "main": [
+    [
+     {
+      "node": "Drive Gate",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Final: Cash Recorded": {
+   "main": [
+    [
+     {
+      "node": "Drive Gate",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Drive Gate": {
+   "main": [
+    [
+     {
+      "node": "Fetch Original Photo",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Fetch Original Photo": {
+   "main": [
+    [
+     {
+      "node": "Prepare Photo File",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Prepare Photo File": {
+   "main": [
+    [
+     {
+      "node": "Find Year Folder",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Find Year Folder": {
+   "main": [
+    [
+     {
+      "node": "Year Folder Exists?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Year Folder Exists?": {
+   "main": [
+    [
+     {
+      "node": "Attach Photo_00",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Create Year Folder",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Create Year Folder": {
+   "main": [
+    [
+     {
+      "node": "Attach Photo_01",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Attach Photo_00": {
+   "main": [
+    [
+     {
+      "node": "Upload Check Photo",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Attach Photo_01": {
+   "main": [
+    [
+     {
+      "node": "Upload Check Photo",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "active": false,
+ "settings": {
+  "executionOrder": "v1"
+ },
+ "pinData": {}
+}

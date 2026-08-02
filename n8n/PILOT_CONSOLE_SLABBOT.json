@@ -1,0 +1,1162 @@
+{
+ "name": "PILOT CONSOLE SLABBOT",
+ "nodes": [
+  {
+   "id": "c0aafceb-97a3-52d4-8b2f-490808717518",
+   "name": "Slab Trigger",
+   "type": "n8n-nodes-base.webhook",
+   "typeVersion": 2.1,
+   "position": [
+    0,
+    0
+   ],
+   "parameters": {
+    "httpMethod": "POST",
+    "path": "pilot-slabbot",
+    "options": {}
+   },
+   "webhookId": "474267a7-98a5-5bdd-837e-ce582157e7f4"
+  },
+  {
+   "id": "5f2c8e20-eecc-5d82-bcfb-a67d2d2a3aeb",
+   "name": "Slab Config",
+   "type": "n8n-nodes-base.set",
+   "typeVersion": 3.4,
+   "position": [
+    260,
+    0
+   ],
+   "parameters": {
+    "assignments": {
+     "assignments": [
+      {
+       "id": "c1",
+       "name": "console_base_url",
+       "type": "string",
+       "value": "PASTE_CONSOLE_BASE_URL"
+      },
+      {
+       "id": "c2",
+       "name": "pilot_hook_secret",
+       "type": "string",
+       "value": "PASTE_PILOT_HOOK_SECRET"
+      },
+      {
+       "id": "c3",
+       "name": "anthropic_api_key",
+       "type": "string",
+       "value": "PASTE_ANTHROPIC_KEY"
+      },
+      {
+       "id": "c4",
+       "name": "bridge_base_url",
+       "type": "string",
+       "value": "https://bridge.emgcheckbot.us"
+      },
+      {
+       "id": "c5",
+       "name": "drive_folder_id",
+       "type": "string",
+       "value": "1-dfgL6KaAkEt1tTEobxYOT_z0N94x5w0"
+      }
+     ]
+    },
+    "includeOtherFields": true,
+    "options": {}
+   }
+  },
+  {
+   "id": "9a988c64-6555-5127-9e53-e7ab5f01d988",
+   "name": "Verify Secret",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    520,
+    0
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "loose",
+      "version": 3
+     },
+     "conditions": [
+      {
+       "id": "b6f948aa",
+       "leftValue": "={{ $('Slab Trigger').item.json.body.secret === $json.pilot_hook_secret }}",
+       "rightValue": "={{ true }}",
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "2fc5c436-5485-558e-948a-483f9d6a9b99",
+   "name": "Drop (Bad Secret)",
+   "type": "n8n-nodes-base.noOp",
+   "typeVersion": 1,
+   "position": [
+    780,
+    0
+   ],
+   "parameters": {}
+  },
+  {
+   "id": "dc9d95ec-fba6-56ac-99c3-09e2609281ff",
+   "name": "Trigger Context",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    780,
+    170
+   ],
+   "parameters": {
+    "jsCode": "// Console outbound payload (deliveries.py):\n// { review_item_id, image_base64, submitted_by, secret }\nconst b = $('Slab Trigger').item.json.body || {};\nconst submitted = String(b.submitted_by || '').trim();\nconst local = submitted.split('@')[0] || '';\nreturn { json: {\n  review_item_id: String(b.review_item_id || ''),\n  image_base64: String(b.image_base64 || ''),\n  submitted_by: submitted || null,\n  submitted_by_name: local ? (local.charAt(0).toUpperCase() + local.slice(1)) : 'a manager',\n  caption: ''\n}};\n"
+   }
+  },
+  {
+   "id": "427de5b2-a553-5628-b208-6e219fa56508",
+   "name": "Read Slip",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    1040,
+    0
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "https://api.anthropic.com/v1/messages",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "x-api-key",
+       "value": "={{ $('Slab Config').item.json.anthropic_api_key }}"
+      },
+      {
+       "name": "anthropic-version",
+       "value": "2023-06-01"
+      },
+      {
+       "name": "content-type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={\"model\": \"claude-opus-4-8\", \"max_tokens\": 4096, \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"image\", \"source\": {\"type\": \"base64\", \"media_type\": \"image/jpeg\", \"data\": \"{{ $('Trigger Context').item.json.image_base64 }}\"}}, {\"type\": \"text\", \"text\": \"You are processing a photo of a stone slab DELIVERY SLIP (a sales order, invoice, delivery ticket, or packing list) sent by a project manager at a countertop fabrication company. The slip lists one or more MATERIALS, and under each material, one row per PHYSICAL SLAB \\u2014 each slab row has a serial number, a barcode, a lot number, dimensions, and a square-footage. The manager may have typed a caption with the photo.\\n\\nORIENTATION FIRST: These photos are often rotated 90 degrees or upside down, and are sometimes wrinkled, shadowed, or creased. Before reading anything, determine the correct orientation, then read every value in that orientation.\\n\\nPM's caption: {{ ($('Trigger Context').item.json.caption || 'no caption').split('\"').join(' ').split('\\n').join(' ') }}\\n\\nExtract the data and respond with ONLY a JSON object \\u2014 no other text, no markdown fences, no comments.\\n\\n{\\n  \\\"supplier_name\\\": \\\"the SELLER's company at the top (logo / letterhead) \\u2014 NOT your own company (Eugenes Marble & Granite). It is almost always ONE of these 17 suppliers; return the EXACT name from this list that matches, even if the print is blurry: Vitoria International | CRS Marble & Granite | MSI | Easy Stones | Cosmos | Triton Stone | Cosentino | Web-Don | Bottega Surfaces | AGM Imports | ACE Granite | StoneBasyx | Encore Stone | Daltile | Architectural Surfaces | Trade Venture Stones | Caesarstone. Common letterhead variants: 'M S International'/'MS International'=MSI, 'Cosmos Granite Charleston'=Cosmos, 'Vitoria International LLC'=Vitoria International, 'Web Don'/'Webdon'=Web-Don, 'Dal-Tile'=Daltile, 'TVS'/'Trade Venture Stones'/'Trade Venture'=Trade Venture Stones, 'Caesar Stone'/'CaesarStone'/'Ceasarstone'=Caesarstone. If you genuinely cannot tell which one it is, return null \\u2014 do NOT guess between two candidates. NEVER return a name outside this list\\\",\\n  \\\"supplier_confidence\\\": \\\"high or low \\u2014 low if blurry, or if you are choosing between two suppliers\\\",\\n  \\\"document_type\\\": \\\"one of: sales order, invoice, delivery ticket, packing list \\u2014 based on the title\\\",\\n  \\\"document_number\\\": \\\"the order/invoice number, usually top-right (e.g. SC23317). Read it character by character. null if unclear\\\",\\n  \\\"order_date\\\": \\\"date printed on the slip\\\",\\n  \\\"sales_rep\\\": \\\"sales rep / salesperson name if present, else null\\\",\\n  \\\"ordered_by\\\": \\\"the PO# field, or the buyer name(s) \\u2014 the people who placed the order, if present, else null\\\",\\n  \\\"ship_to\\\": \\\"the 'Ship To' company/name if present, else null\\\",\\n  \\\"subtotal\\\": \\\"subtotal amount, digits only (e.g. 28368.20), else null\\\",\\n  \\\"tax\\\": \\\"tax amount, digits only, else null\\\",\\n  \\\"total\\\": \\\"grand total / balance due, digits only (e.g. 30921.34), else null\\\",\\n  \\\"handwritten_notes\\\": \\\"transcribe VERBATIM any handwritten text or markings anywhere on the slip (e.g. 'missing corners', a checkmark, a circled row). This is important for damage tracking. If none, null\\\",\\n  \\\"caption_job_name\\\": \\\"the job/customer name the PM means in the caption above, exactly as written (preserve underscores and capitalization). Strip filler like 'this is for', 'received', 'delivery'. The room names on the slip (KITCHEN, MASTER BATH, OUTDOOR KITCHEN, etc.) are NOT job names \\u2014 never use them here. If the caption is 'no caption' or has no name, null\\\",\\n  \\\"package_count\\\": \\\"for a Bill of Lading, freight slip, or packing list that ships CRATES/PACKAGES of prefab slabs (common for MSI / M S International), the No of Pkgs or Total Pkg number (e.g. 8) - the number of slabs/pieces received. null if the slip lists individual slab rows instead, or if not shown\\\",\\n  \\\"slabs\\\": [\\n    {\\n      \\\"material\\\": \\\"stone/material name for this line, words only, no finish or thickness (e.g. NAMIB WHITE, ATLANTIC LAVA STONE, EXOTICA)\\\",\\n      \\\"finish\\\": \\\"surface finish if stated (e.g. HONED, LEATHERED, POLISHED), else null\\\",\\n      \\\"thickness\\\": \\\"slab thickness if stated (e.g. 2CM, 3CM), else null\\\",\\n      \\\"area\\\": \\\"the room/area shown in the line description, usually after a slash (e.g. MASTER BATH, KITCHEN), else null\\\",\\n      \\\"serial_number\\\": \\\"THIS slab's serial number (e.g. 1511-40, 1462-35). Read digit by digit. null if any digit is unclear \\u2014 NEVER guess\\\",\\n      \\\"serial_confidence\\\": \\\"high or low\\\",\\n      \\\"barcode\\\": \\\"THIS slab's barcode (e.g. VIT531130). Read character by character \\u2014 letters first, then digits. null if unclear\\\",\\n      \\\"barcode_confidence\\\": \\\"high or low\\\",\\n      \\\"lot\\\": \\\"lot number for this slab if present, else null\\\",\\n      \\\"dimensions\\\": \\\"this slab's dimensions exactly as written (e.g. 120\\\\\\\" x 69\\\\\\\")\\\",\\n      \\\"square_feet\\\": \\\"this slab's square footage, digits only (e.g. 57.50)\\\",\\n      \\\"line_sf_total\\\": \\\"the TOTAL square footage shown for THIS slab's whole material LINE (e.g. 300.64 for the entire EXOTICA line), digits only \\u2014 the SAME value for every slab in the line. null if not shown\\\",\\n      \\\"unit_price\\\": \\\"the Unit Price for THIS material line if a price column exists (e.g. 60.00), digits only \\u2014 the SAME for every slab in the line. null if the slip shows no prices\\\",\\n      \\\"extended_price\\\": \\\"the Extended / line-total price for THIS material line if shown (e.g. 18038.40), digits only \\u2014 the SAME for every slab in the line. null if no prices\\\",\\n      \\\"condition_note\\\": \\\"if a handwritten mark clearly refers to THIS slab (its row circled, or marked 'broken'/'chip'/'missing corner'), note it here, else null\\\"\\n    }\\n  ],\\n  \\\"stated_counts\\\": \\\"for each material line, the slab count shown in parentheses in the description (e.g. (2), (5)). Report as a short string like 'NAMIB WHITE: 2; ATLANTIC LAVA STONE: 1; EXOTICA: 5'. This lets us cross-check it against how many slab objects you returned\\\"\\n}\\n\\nRULES:\\n- Output ONE slab object per PHYSICAL slab row. If a material line says (5) and shows 5 dimension rows, return 5 slab objects for that material.\\n- BILL OF LADING / PACKING SLIP FORMAT (often MSI / M S International, titled Bill Of Lading): these do NOT list individual slab rows with serials and barcodes. They show No of Pkgs / Total Pkg (e.g. 8) with a generic description like Crates of Prefab Slabs, and put the real material and square footage in a Remarks field (e.g. 608 SQFT CALACATTA PREMATA 3CM POLISHED). For these slips: (1) set package_count to the No of Pkgs / Total Pkg number; (2) return ONE slab object PER PACKAGE, so No of Pkgs = 8 means 8 slab objects; (3) parse material, thickness, and finish from the Remarks text onto each object (e.g. material CALACATTA PREMATA, thickness 3CM, finish POLISHED); (4) put the total square footage from Remarks into line_sf_total (e.g. 608); (5) leave serial_number, barcode, lot, dimensions, and square_feet as null - the slip does not show them per slab, and that is EXPECTED, not an error; (6) set stated_counts to MATERIAL: count (e.g. CALACATTA PREMATA: 8).\\n- Read every serial number and barcode CHARACTER BY CHARACTER. Watch confusable characters: 0/O, 1/7, 5/6, 8/3, 8/6, 2/Z, B/8, G/6. If unsure on any single character, set the whole value to null and confidence to \\\"low\\\". NEVER guess.\\n- DENORMALIZE: copy the material, finish, thickness, and area onto EVERY slab under that line, so each slab object stands completely on its own.\\n- Amounts: digits only. Ignore $ signs, commas, and any trailing dashes or flourishes.\\n- handwritten_notes and condition_note capture PEN/MARKER only \\u2014 never the machine-printed text.\\n- caption_job_name comes ONLY from the caption line above, never from the slip body.\\n- If an entire field is unreadable, use null. Do not invent values.\"}]}]}",
+    "options": {}
+   }
+  },
+  {
+   "id": "bae6f6e8-688d-5144-af16-0cc6ee7be9d6",
+   "name": "Parse Slip",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    1300,
+    0
+   ],
+   "parameters": {
+    "mode": "runOnceForEachItem",
+    "jsCode": "const SUPPLIERS=[\"Vitoria International\",\"CRS Marble & Granite\",\"MSI\",\"Easy Stones\",\"Cosmos\",\"Triton Stone\",\"Cosentino\",\"Web-Don\",\"Bottega Surfaces\",\"AGM Imports\",\"ACE Granite\",\"StoneBasyx\",\"Encore Stone\",\"Daltile\",\"Architectural Surfaces\",\"Trade Venture Stones\",\"Caesarstone\"];\nconst raw=$input.item.json.content[0].text;\nconst cleaned=raw.replace(/```json|```/g,'').trim();\nlet d={}; try{ d=JSON.parse(cleaned); }catch(e){ d={}; }\nconst num=v=>{ if(v==null)return null; const n=parseFloat(String(v).replace(/[^0-9.]/g,'')); return isNaN(n)?null:n; };\nconst txt=v=>{ if(v==null)return null; const t=String(v).replace(/\\s+/g,' ').trim(); return t.length?t:null; };\n\nlet sup=txt(d.supplier_name); let canonical='_Unmatched';\nif(sup){ const hit=SUPPLIERS.find(s=>s.toLowerCase()===sup.toLowerCase()); if(hit)canonical=hit; }\nconst supplierLow=(d.supplier_confidence==='low')||canonical==='_Unmatched';\n\nconst slabs=Array.isArray(d.slabs)?d.slabs:[];\nconst groups={};\nfor(const s of slabs){\n  const key=[txt(s.material)||'',txt(s.finish)||'',txt(s.thickness)||'',txt(s.area)||''].join('||');\n  if(!groups[key])groups[key]={material:txt(s.material),finish:txt(s.finish),thickness:txt(s.thickness),area:txt(s.area),unit_price:num(s.unit_price),extended_price:num(s.extended_price),line_sf_total:num(s.line_sf_total),slabs:[]};\n  groups[key].slabs.push(s);\n}\nconst materials=Object.values(groups).map(g=>{\n  const hasPerSlabSf=g.slabs.some(s=>num(s.square_feet)!=null);\n  const perSlabSf=g.slabs.reduce((a,s)=>a+(num(s.square_feet)||0),0);\n  const sf=hasPerSlabSf?perSlabSf:(num(g.line_sf_total)||0);\n  const serialsArr=g.slabs.map(s=>txt(s.serial_number)).filter(Boolean);\n  const barcodesArr=g.slabs.map(s=>txt(s.barcode)).filter(Boolean);\n  return {material:g.material,finish:g.finish,thickness:g.thickness,area:g.area,\n    slab_count:g.slabs.length,total_sf:Math.round(sf*100)/100,has_per_slab_sf:hasPerSlabSf,\n    unit_price:g.unit_price,extended_price:g.extended_price,line_sf_total:g.line_sf_total,\n    serials:serialsArr.join(', '),barcodes:barcodesArr.join(', '),\n    n_serials:serialsArr.length,n_barcodes:barcodesArr.length,\n    lot:(g.slabs.map(s=>txt(s.lot)).filter(Boolean)[0])||null};\n});\n\n// Bill of Lading / packing slip: one material, no per-slab serials/barcodes, slip states a package count -> trust it\nconst pkgCount=parseInt(String(d.package_count==null?'':d.package_count).replace(/[^0-9]/g,''));\nif(materials.length===1 && !isNaN(pkgCount) && pkgCount>0 && materials[0].n_serials===0 && materials[0].n_barcodes===0 && pkgCount>materials[0].slab_count){ materials[0].slab_count=pkgCount; }\n\nlet qtyOk=true, sfOk=true, priceState='NA', hasPrice=false;\nconst statedMap={};\nif(d.stated_counts){ String(d.stated_counts).split(/[;\\n]/).forEach(p=>{ const x=p.split(':'); if(x.length>=2){ const nm=x[0].trim().toLowerCase(); const n=parseInt(x[1].replace(/[^0-9]/g,'')); if(nm&&!isNaN(n))statedMap[nm]=n; } }); }\nfor(const mt of materials){\n  const nm=(mt.material||'').toLowerCase();\n  if(statedMap[nm]!=null && statedMap[nm]!==mt.slab_count) qtyOk=false;\n  if(mt.line_sf_total!=null && mt.has_per_slab_sf){ if(Math.abs(mt.total_sf-mt.line_sf_total)>Math.max(0.5,mt.line_sf_total*0.02)) sfOk=false; }\n  if(mt.unit_price!=null && mt.extended_price!=null && mt.line_sf_total!=null){ hasPrice=true; const expected=mt.line_sf_total*mt.unit_price; if(Math.abs(expected-mt.extended_price)>Math.max(2,mt.extended_price*0.02)) priceState='fail'; }\n}\nconst total=num(d.total), subtotal=num(d.subtotal), tax=num(d.tax);\nif(hasPrice && total!=null){ const sumExt=materials.reduce((a,m)=>a+(m.extended_price||0),0); const expected=sumExt+(tax||0); if(Math.abs(expected-total)>Math.max(2,total*0.02)) priceState='fail'; }\nif(hasPrice && priceState!=='fail') priceState='pass';\n\nconst slabCount=materials.reduce((a,m)=>a+m.slab_count,0);\nconst validationOk=!((!qtyOk)||(!sfOk)||(priceState==='fail')||supplierLow);\n\nconst supName=(canonical||'Unknown').replace(/[\\/\\\\?%*:|\"<>]/g,'').trim()||'Unknown';\nlet ds=txt(d.order_date); let dnorm=null;\nif(ds){ const dt=new Date(ds); if(!isNaN(dt)) dnorm=dt.toISOString().slice(0,10); }\nif(!dnorm) dnorm=new Date().toISOString().slice(0,10);\nconst docName=(txt(d.document_number)||'NA').replace(/[\\/\\\\?%*:|\"<>\\s]/g,'');\nconst filename=supName+'_'+dnorm+'_'+docName+'.jpg';\n\n// dedup formula: prefer Supplier+Document#, fall back to Supplier+Total+Slab count when no doc#\nlet dedupFormula;\nconst docVal=txt(d.document_number);\nif(docVal){ const de=docVal.replace(/'/g,\"\\\\'\"); dedupFormula=\"AND({Supplier}='\"+canonical+\"', {Document #}='\"+de+\"')\"; }\nelse { dedupFormula=\"AND({Supplier}='\"+canonical+\"', {Total}=\"+(total||0)+\", {Slab count}=\"+slabCount+\")\"; }\n\nconst wb={pushName:$('Trigger Context').item.json.submitted_by_name,key:{id:$('Trigger Context').item.json.review_item_id,participant:''},message:{imageMessage:{caption:null}}};\nconst manager=(wb.pushName)||(wb.key&&wb.key.participant)||'';\nconst caption=txt(wb.message&&wb.message.imageMessage&&wb.message.imageMessage.caption);\n\nconst issues=[];\nif(!qtyOk)issues.push('slab count vs slip');\nif(!sfOk)issues.push('square footage');\nif(priceState==='fail')issues.push('prices');\nif(supplierLow)issues.push('supplier name unclear');\nconst validation_note=issues.length?('\\u26a0\\ufe0f Please check: '+issues.join(', ')):'\\u2705 Counts / SF / prices check out';\nconst materials_summary=materials.map(m=>(m.material||'?')+' \\u00d7'+m.slab_count).join(', ');\n\nreturn { json:{\n  supplier_canonical:canonical, supplier_confidence:d.supplier_confidence||null, supplier_low:supplierLow,\n  document_number:txt(d.document_number), order_date:ds, order_date_iso:dnorm, received:new Date().toISOString(),\n  subtotal, tax, total, hand_notes:txt(d.handwritten_notes), caption_job_name:txt(d.caption_job_name),\n  caption, manager, message_id:wb.key.id, slab_count:slabCount,\n  sf_check:sfOk, qty_check:qtyOk, price_check:priceState, validation_ok:validationOk,\n  photo_filename:filename, dedup_formula:dedupFormula, materials, materials_summary, validation_note\n}};"
+   }
+  },
+  {
+   "id": "8a424f60-dc21-5054-808a-a3e87e54a8ae",
+   "name": "Dedup Lookup",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    1560,
+    0
+   ],
+   "parameters": {
+    "method": "GET",
+    "url": "={{ $('Slab Config').item.json.console_base_url }}/api/hooks/slab/find?supplier={{ encodeURIComponent($json.supplier_canonical || '') }}{{ $json.document_number ? ('&document_number=' + encodeURIComponent($json.document_number)) : ('&total=' + encodeURIComponent($json.total ?? 0) + '&slab_count=' + encodeURIComponent($json.slab_count ?? 0)) }}",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "X-Pilot-Secret",
+       "value": "={{ $('Slab Config').item.json.pilot_hook_secret }}"
+      }
+     ]
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "af7f9d2a-6bce-54a6-a7c6-1cf9abb6e2aa",
+   "name": "Dedup Decide",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    1820,
+    0
+   ],
+   "parameters": {
+    "jsCode": "const me = $('Trigger Context').item.json.review_item_id;\nconst hits = ($json.items || []).filter(r => r.review_item_id !== me\n  && r.status !== 'duplicate');\nreturn { json: Object.assign({}, $('Parse Slip').item.json,\n  { _dupId: hits.length ? hits[0].review_item_id : '' }) };\n"
+   }
+  },
+  {
+   "id": "012f63ec-bd27-5dd3-90eb-4cb98aa58448",
+   "name": "Already Uploaded?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    2080,
+    0
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "loose",
+      "version": 3
+     },
+     "conditions": [
+      {
+       "id": "d92f7614",
+       "leftValue": "={{ ($json._dupId || '') !== '' }}",
+       "rightValue": "={{ true }}",
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "41f3fa68-a8f9-5968-bf67-556dbc20ce6e",
+   "name": "Final: Duplicate Slip",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    2340,
+    0
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $('Slab Config').item.json.console_base_url }}/api/hooks/slab/final",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "X-Pilot-Secret",
+       "value": "={{ $('Slab Config').item.json.pilot_hook_secret }}"
+      },
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={\n  \"review_item_id\": \"{{ $('Trigger Context').item.json.review_item_id }}\",\n  \"body\": {{ JSON.stringify('\\u26a0 This slip was already uploaded \\u2014 ' + ($('Parse Slip').item.json.supplier_canonical || 'supplier') + ' ' + ($('Parse Slip').item.json.document_number || '') + ' is on an earlier card. See it here: ' + ($('Slab Config').item.json.console_base_url + '/deliveries/item/' + ($('Dedup Decide').item.json._dupId || '')) + '. Nothing recorded twice.') }},\n  \"status\": \"duplicate\",\n  \"push\": true\n}",
+    "options": {}
+   }
+  },
+  {
+   "id": "d110dc0e-84f2-5aed-bf18-bff0d965f414",
+   "name": "Fetch Original Photo",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    2340,
+    170
+   ],
+   "parameters": {
+    "method": "GET",
+    "url": "={{ $('Slab Config').item.json.console_base_url }}/api/hooks/pilot/photo/{{ $('Trigger Context').item.json.review_item_id }}",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "X-Pilot-Secret",
+       "value": "={{ $('Slab Config').item.json.pilot_hook_secret }}"
+      }
+     ]
+    },
+    "options": {
+     "response": {
+      "response": {
+       "responseFormat": "file"
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "92253ac9-843c-5b30-9a7f-804259c18e07",
+   "name": "Search Year",
+   "type": "n8n-nodes-base.googleDrive",
+   "typeVersion": 3,
+   "position": [
+    2600,
+    0
+   ],
+   "parameters": {
+    "resource": "fileFolder",
+    "searchMethod": "query",
+    "queryString": "={{ \"name = '\" + $('Parse Slip').item.json.received.slice(0,4) + \"' and '\" + $('Slab Config').item.json.drive_folder_id + \"' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false\" }}",
+    "limit": 1,
+    "filter": {},
+    "options": {}
+   },
+   "alwaysOutputData": true
+  },
+  {
+   "id": "4d8bd1f7-cdde-5351-a069-a4fcd445f9cc",
+   "name": "Year Exists?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    2860,
+    0
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "loose",
+      "version": 2
+     },
+     "conditions": [
+      {
+       "id": "766f809b-7bc7-490c-a03d-5b3393e680f0",
+       "leftValue": "={{ $json.id || '' }}",
+       "rightValue": "",
+       "operator": {
+        "type": "string",
+        "operation": "notEmpty",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "looseTypeValidation": true,
+    "options": {}
+   }
+  },
+  {
+   "id": "41565d84-8298-502b-9bdc-a4b9f7807f5a",
+   "name": "Create Year",
+   "type": "n8n-nodes-base.googleDrive",
+   "typeVersion": 3,
+   "position": [
+    3120,
+    0
+   ],
+   "parameters": {
+    "resource": "folder",
+    "name": "={{ $('Parse Slip').item.json.received.slice(0,4) }}",
+    "driveId": {
+     "__rl": true,
+     "value": "My Drive",
+     "mode": "list",
+     "cachedResultName": "My Drive"
+    },
+    "folderId": {
+     "__rl": true,
+     "value": "={{ $('Slab Config').item.json.drive_folder_id }}",
+     "mode": "id"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "09980c66-ef76-550c-a272-07ac00536601",
+   "name": "Set Year Folder",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    3120,
+    170
+   ],
+   "parameters": {
+    "mode": "runOnceForEachItem",
+    "jsCode": "return { json: { year_folder_id: $json.id } };"
+   }
+  },
+  {
+   "id": "46336572-8098-5d5a-8a85-51be55a7b0a9",
+   "name": "Search Supplier",
+   "type": "n8n-nodes-base.googleDrive",
+   "typeVersion": 3,
+   "position": [
+    3380,
+    0
+   ],
+   "parameters": {
+    "resource": "fileFolder",
+    "searchMethod": "query",
+    "queryString": "={{ \"name = '\" + $('Parse Slip').item.json.supplier_canonical + \"' and '\" + $('Set Year Folder').item.json.year_folder_id + \"' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false\" }}",
+    "limit": 1,
+    "filter": {},
+    "options": {}
+   },
+   "alwaysOutputData": true
+  },
+  {
+   "id": "b73b16df-105a-5682-a4fe-76059216528b",
+   "name": "Supplier Exists?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    3640,
+    0
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "loose",
+      "version": 2
+     },
+     "conditions": [
+      {
+       "id": "2d68632b-0870-4a9b-9588-be65469f9be1",
+       "leftValue": "={{ $json.id || '' }}",
+       "rightValue": "",
+       "operator": {
+        "type": "string",
+        "operation": "notEmpty",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "looseTypeValidation": true,
+    "options": {}
+   }
+  },
+  {
+   "id": "5f07bdf9-8fb7-5afe-afab-27d3e68aa615",
+   "name": "Create Supplier",
+   "type": "n8n-nodes-base.googleDrive",
+   "typeVersion": 3,
+   "position": [
+    3900,
+    0
+   ],
+   "parameters": {
+    "resource": "folder",
+    "name": "={{ $('Parse Slip').item.json.supplier_canonical }}",
+    "driveId": {
+     "__rl": true,
+     "value": "My Drive",
+     "mode": "list",
+     "cachedResultName": "My Drive"
+    },
+    "folderId": {
+     "__rl": true,
+     "value": "={{ $('Set Year Folder').item.json.year_folder_id }}",
+     "mode": "id"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "6e2d0525-b121-54e4-a23c-2eb03b11a781",
+   "name": "Set Supplier Folder",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    3900,
+    170
+   ],
+   "parameters": {
+    "mode": "runOnceForEachItem",
+    "jsCode": "return { json: { supplier_folder_id: $json.id } };"
+   }
+  },
+  {
+   "id": "59c9e9a9-8881-5a66-8f28-55d149fa466d",
+   "name": "Prep Binary",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    4160,
+    0
+   ],
+   "parameters": {
+    "jsCode": "const src=$('Fetch Original Photo').item.binary.data;\nconst fn=$('Parse Slip').first().json.photo_filename||'slip.jpg';\nreturn [{ json:{ fileName:fn }, binary:{ data: Object.assign({}, src, { fileName: fn }) } }];"
+   }
+  },
+  {
+   "id": "7d3685e5-f1c3-5111-b9e2-8799ff79d164",
+   "name": "Upload to Drive",
+   "type": "n8n-nodes-base.googleDrive",
+   "typeVersion": 3,
+   "position": [
+    4420,
+    0
+   ],
+   "parameters": {
+    "name": "={{ $('Parse Slip').item.json.photo_filename }}",
+    "driveId": {
+     "__rl": true,
+     "value": "My Drive",
+     "mode": "list",
+     "cachedResultName": "My Drive"
+    },
+    "folderId": {
+     "__rl": true,
+     "value": "={{ $('Set Supplier Folder').item.json.supplier_folder_id }}",
+     "mode": "id"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "91cb3928-e181-5cfc-a402-91b8572ad1e7",
+   "name": "Update: Slip Details",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    4680,
+    0
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $('Slab Config').item.json.console_base_url }}/api/hooks/slab/update",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "X-Pilot-Secret",
+       "value": "={{ $('Slab Config').item.json.pilot_hook_secret }}"
+      },
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={\n  \"review_item_id\": \"{{ $('Trigger Context').item.json.review_item_id }}\",\n  \"body\": {{ JSON.stringify('Read the slip: ' + ($('Parse Slip').item.json.supplier_canonical || 'unknown supplier') + ' \\u2014 ' + ($('Parse Slip').item.json.document_number || 'no #') + ' \\u00b7 ' + ($('Parse Slip').item.json.slab_count ?? '?') + ' slabs \\u00b7 ' + ($('Parse Slip').item.json.materials_summary || '') + '. ' + ($('Parse Slip').item.json.validation_note || '')) }},\n  \"details\": {{ JSON.stringify({supplier: $('Parse Slip').item.json.supplier_canonical, supplier_confidence: $('Parse Slip').item.json.supplier_confidence, document_number: $('Parse Slip').item.json.document_number, order_date: $('Parse Slip').item.json.order_date_iso, subtotal: $('Parse Slip').item.json.subtotal, tax: $('Parse Slip').item.json.tax, total: $('Parse Slip').item.json.total, slab_count: $('Parse Slip').item.json.slab_count, hand_notes: $('Parse Slip').item.json.hand_notes, validation_note: $('Parse Slip').item.json.validation_note, validation_ok: $('Parse Slip').item.json.validation_ok, materials: ($('Parse Slip').item.json.materials || []).map(function(m){return {material: m.material, finish: m.finish, thickness: m.thickness, area: m.area, slab_count: m.slab_count, total_sf: m.total_sf, serials: m.serials, barcodes: m.barcodes, lot: m.lot, unit_price: m.unit_price, extended_price: m.extended_price};}), drive_file_id: $('Upload to Drive').item.json.id, drive_url: 'https://drive.google.com/file/d/' + $('Upload to Drive').item.json.id + '/view', supplier_folder_id: $('Set Supplier Folder').item.json.supplier_folder_id}) }},\n  \"status\": \"needs_job\",\n  \"push\": true,\n  \"push_title\": {{ JSON.stringify('Delivery from ' + ($('Parse Slip').item.json.supplier_canonical || 'a supplier') + ' \\u2014 ' + (($('Parse Slip').item.json.materials || []).length) + ' material' + (($('Parse Slip').item.json.materials || []).length === 1 ? '' : 's') + ' \\u2014 needs a job') }}\n}",
+    "options": {}
+   }
+  },
+  {
+   "id": "55e1c65b-1091-5b89-8697-ef60faaab4c2",
+   "name": "Slab Decision Webhook",
+   "type": "n8n-nodes-base.webhook",
+   "typeVersion": 2.1,
+   "position": [
+    0,
+    930
+   ],
+   "parameters": {
+    "httpMethod": "POST",
+    "path": "slab-decision",
+    "options": {}
+   },
+   "webhookId": "44e4f485-e24e-5e7c-b3f4-8a9675b530ab"
+  },
+  {
+   "id": "b3fa0ba5-7159-518c-991a-559560fe8ab6",
+   "name": "Slab Config D",
+   "type": "n8n-nodes-base.set",
+   "typeVersion": 3.4,
+   "position": [
+    260,
+    930
+   ],
+   "parameters": {
+    "assignments": {
+     "assignments": [
+      {
+       "id": "c1",
+       "name": "console_base_url",
+       "type": "string",
+       "value": "PASTE_CONSOLE_BASE_URL"
+      },
+      {
+       "id": "c2",
+       "name": "pilot_hook_secret",
+       "type": "string",
+       "value": "PASTE_PILOT_HOOK_SECRET"
+      },
+      {
+       "id": "c3",
+       "name": "anthropic_api_key",
+       "type": "string",
+       "value": "PASTE_ANTHROPIC_KEY"
+      },
+      {
+       "id": "c4",
+       "name": "bridge_base_url",
+       "type": "string",
+       "value": "https://bridge.emgcheckbot.us"
+      },
+      {
+       "id": "c5",
+       "name": "drive_folder_id",
+       "type": "string",
+       "value": "1-dfgL6KaAkEt1tTEobxYOT_z0N94x5w0"
+      }
+     ]
+    },
+    "includeOtherFields": true,
+    "options": {}
+   }
+  },
+  {
+   "id": "264bebb7-fc14-5d2e-a48b-c6b45d9da664",
+   "name": "Parse Confirm",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    520,
+    930
+   ],
+   "parameters": {
+    "jsCode": "// Console confirm payload (deliveries.py confirm_delivery):\n// { secret, review_item_id, supplier, document_number, received, slab_count,\n//   drive_file_id, supplier_folder_id, all_stock, jobs:[{job_id, job_name,\n//   moraware_url, materials:[{material, slab_count, total_sf}]}],\n//   stock_materials:[...], confirmed_by }\nconst b = $('Slab Decision Webhook').first().json.body || {};\nconst ok = String(b.secret || '') === $('Slab Config D').first().json.pilot_hook_secret;\nconst jobs = Array.isArray(b.jobs) ? b.jobs : [];\nconst stock = Array.isArray(b.stock_materials) ? b.stock_materials : [];\nfunction matLine(list) {\n  return list.map(m => (m.material || 'material')\n    + (m.slab_count != null ? (' \\u00d7' + m.slab_count) : '')\n    + (m.total_sf != null ? (' (' + m.total_sf + ' sf)') : '')).join(', ');\n}\nconst who = String(b.confirmed_by || '').split('@')[0] || 'a manager';\nconst summary = jobs.map(j => matLine(j.materials) + ' \\u2192 ' + (j.job_name || ('job #' + j.job_id)))\n  .concat(stock.length ? [matLine(stock) + ' \\u2192 Stock'] : []).join('; ');\nreturn { json: {\n  valid: ok && !!b.review_item_id,\n  review_item_id: String(b.review_item_id || ''),\n  supplier: b.supplier || '', document_number: b.document_number || '',\n  received: b.received || '', all_stock: !!b.all_stock,\n  confirmed_by: who, summary: summary,\n  jobs: jobs.map(j => ({\n    job_id: j.job_id, job_name: j.job_name || '',\n    note: (b.supplier || 'Supplier') + ' \\u2014 '\n      + matLine(j.materials)\n      + ' \\u00b7 received ' + (b.received || '')\n      + (b.document_number ? (' \\u00b7 slip ' + b.document_number) : '')\n      + '. Assigned by ' + who + ' via the console (slab-bot).'\n  }))\n}};\n"
+   }
+  },
+  {
+   "id": "baef27dd-5865-5576-8a18-3ae6263c7f41",
+   "name": "Confirm Valid?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    780,
+    1100
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "loose",
+      "version": 3
+     },
+     "conditions": [
+      {
+       "id": "3652545d",
+       "leftValue": "={{ $json.valid === true }}",
+       "rightValue": "={{ true }}",
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "5e6661c0-758f-5cd0-b10d-e837547fa4f6",
+   "name": "Drop (Bad Confirm)",
+   "type": "n8n-nodes-base.noOp",
+   "typeVersion": 1,
+   "position": [
+    1040,
+    930
+   ],
+   "parameters": {}
+  },
+  {
+   "id": "abd896e6-775e-544e-b174-bcf1ba0b2deb",
+   "name": "Any Jobs?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    1040,
+    1100
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "loose",
+      "version": 3
+     },
+     "conditions": [
+      {
+       "id": "d3421fa1",
+       "leftValue": "={{ ($json.jobs || []).length > 0 }}",
+       "rightValue": "={{ true }}",
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "7503a3fb-4dd2-5022-bfb2-f0e90f696e12",
+   "name": "Fan Jobs",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    1300,
+    930
+   ],
+   "parameters": {
+    "jsCode": "const p = $('Parse Confirm').first().json;\nreturn p.jobs.map(j => ({ json: j }));\n"
+   }
+  },
+  {
+   "id": "2f409469-a680-5abe-b450-55888d97276d",
+   "name": "Post Moraware Note",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    1560,
+    930
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $('Slab Config D').item.json.bridge_base_url }}/api/slabbot/add-activity",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({ jobId: Number($json.job_id), note: $json.note }) }}",
+    "options": {}
+   }
+  },
+  {
+   "id": "71eb793d-a1b2-5931-a8d3-6106b164ce4e",
+   "name": "Collect Notes",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    1820,
+    930
+   ],
+   "parameters": {
+    "jsCode": "const all = $input.all();\nreturn [{ json: { notes_posted: all.length } }];\n"
+   }
+  },
+  {
+   "id": "af735f8e-6856-5d88-bbee-83a3c309e8e6",
+   "name": "Final: Filed",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.4,
+   "position": [
+    1300,
+    1100
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $('Slab Config D').item.json.console_base_url }}/api/hooks/slab/final",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "X-Pilot-Secret",
+       "value": "={{ $('Slab Config D').item.json.pilot_hook_secret }}"
+      },
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={\n  \"review_item_id\": \"{{ $('Parse Confirm').first().json.review_item_id }}\",\n  \"body\": {{ JSON.stringify('\\u2713 ' + ($('Parse Confirm').first().json.supplier || 'Delivery') + ($('Parse Confirm').first().json.document_number ? (' ' + $('Parse Confirm').first().json.document_number) : '') + ' filed: ' + ($('Parse Confirm').first().json.summary || 'done') + '. ' + (($('Parse Confirm').first().json.jobs || []).length ? 'Moraware note' + (($('Parse Confirm').first().json.jobs || []).length === 1 ? '' : 's') + ' added.' : 'Stock \\u2014 no Moraware note needed.')) }},\n  \"status\": \"{{ $('Parse Confirm').first().json.all_stock ? 'stock' : 'confirmed' }}\",\n  \"push\": false\n}",
+    "options": {}
+   }
+  }
+ ],
+ "connections": {
+  "Slab Trigger": {
+   "main": [
+    [
+     {
+      "node": "Slab Config",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Slab Config": {
+   "main": [
+    [
+     {
+      "node": "Verify Secret",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Verify Secret": {
+   "main": [
+    [
+     {
+      "node": "Trigger Context",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Drop (Bad Secret)",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Trigger Context": {
+   "main": [
+    [
+     {
+      "node": "Read Slip",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Read Slip": {
+   "main": [
+    [
+     {
+      "node": "Parse Slip",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Parse Slip": {
+   "main": [
+    [
+     {
+      "node": "Dedup Lookup",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Dedup Lookup": {
+   "main": [
+    [
+     {
+      "node": "Dedup Decide",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Dedup Decide": {
+   "main": [
+    [
+     {
+      "node": "Already Uploaded?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Already Uploaded?": {
+   "main": [
+    [
+     {
+      "node": "Final: Duplicate Slip",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Fetch Original Photo",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Fetch Original Photo": {
+   "main": [
+    [
+     {
+      "node": "Search Year",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Search Year": {
+   "main": [
+    [
+     {
+      "node": "Year Exists?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Year Exists?": {
+   "main": [
+    [
+     {
+      "node": "Set Year Folder",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Create Year",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Create Year": {
+   "main": [
+    [
+     {
+      "node": "Set Year Folder",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Set Year Folder": {
+   "main": [
+    [
+     {
+      "node": "Search Supplier",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Search Supplier": {
+   "main": [
+    [
+     {
+      "node": "Supplier Exists?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Supplier Exists?": {
+   "main": [
+    [
+     {
+      "node": "Set Supplier Folder",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Create Supplier",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Create Supplier": {
+   "main": [
+    [
+     {
+      "node": "Set Supplier Folder",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Set Supplier Folder": {
+   "main": [
+    [
+     {
+      "node": "Prep Binary",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Prep Binary": {
+   "main": [
+    [
+     {
+      "node": "Upload to Drive",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Upload to Drive": {
+   "main": [
+    [
+     {
+      "node": "Update: Slip Details",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Slab Decision Webhook": {
+   "main": [
+    [
+     {
+      "node": "Slab Config D",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Slab Config D": {
+   "main": [
+    [
+     {
+      "node": "Parse Confirm",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Parse Confirm": {
+   "main": [
+    [
+     {
+      "node": "Confirm Valid?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Confirm Valid?": {
+   "main": [
+    [
+     {
+      "node": "Any Jobs?",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Drop (Bad Confirm)",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Any Jobs?": {
+   "main": [
+    [
+     {
+      "node": "Fan Jobs",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Final: Filed",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Fan Jobs": {
+   "main": [
+    [
+     {
+      "node": "Post Moraware Note",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Post Moraware Note": {
+   "main": [
+    [
+     {
+      "node": "Collect Notes",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Collect Notes": {
+   "main": [
+    [
+     {
+      "node": "Final: Filed",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "active": false,
+ "settings": {
+  "executionOrder": "v1"
+ },
+ "pinData": {}
+}
