@@ -313,10 +313,11 @@ def confirm_scan(
         response = httpx.post(
             settings.bridge_base_url + "/api/console/job-form-note",
             headers={"X-Console-Key": settings.bridge_console_key},
-            # form="summary" -> Job Summary form's Notes (owner 2026-07-25);
-            # the bridge still defaults to Details if it doesn't know the field.
+            # form="details" -> Job Details form's Notes (owner 2026-08-06,
+            # reversing the 2026-07-25 switch to summary); matches the
+            # bridge's own default when it doesn't know the field.
             json={"jobId": int(item.matched_job_id), "text": text,
-                  "form": "summary"},
+                  "form": "details"},
             timeout=BRIDGE_TIMEOUT_SECONDS,
         )
         response.raise_for_status()

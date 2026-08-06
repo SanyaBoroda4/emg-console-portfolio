@@ -131,7 +131,7 @@ def test_confirm_posts_note_and_turns_confirmed(client, monkeypatch):
     assert sent[0]["url"].endswith("/api/console/job-form-note")
     assert sent[0]["headers"]["X-Console-Key"] == "test-bridge-key"
     assert sent[0]["json"]["jobId"] == 5829
-    assert sent[0]["json"]["form"] == "summary"
+    assert sent[0]["json"]["form"] == "details"
     lines = sent[0]["json"]["text"].split("\n")
     assert lines[0].startswith("Slabs scanned ")
     assert lines[1:] == [
